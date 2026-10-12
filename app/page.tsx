@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "./lib/supabase";
-
+type BeforeInstallPromptEvent = Event & {
+  readonly platforms: string[];
+  prompt: () => Promise<void>;
+  userChoice: Promise<{
+    outcome: "accepted" | "dismissed";
+    platform: string;
+  }>;
+};
 type Media = { url: string; type: string; name: string };
 type Post = {
   id?: number;
@@ -121,7 +128,7 @@ export default function Home() {
   const [section, setSection] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState("All");
-  const [installEvt, setInstallEvt] = useState<any>(null);
+  const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
 
   // auth form
   const [mode, setMode] = useState<"login" | "signup">("login");
