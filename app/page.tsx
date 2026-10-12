@@ -159,10 +159,11 @@ export default function Home() {
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
     const onPrompt = (e: Event) => {
-      e.preventDefault();
-      setInstallEvt(e);
-    };
-    window.addEventListener("beforeinstallprompt", onPrompt);
+  e.preventDefault();
+  setInstallEvt(e as BeforeInstallPromptEvent);
+};
+
+window.addEventListener("beforeinstallprompt", onPrompt);
 
     let alive = true;
     supabase.auth.getUser().then(({ data }) => {
