@@ -2,26 +2,39 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], display: "swap" });
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  title: "FUTAHUB | Your Campus, Your Community",
+  title: "FutaHub | Your Campus. Everything Connected.",
   description:
-    "FUTAHUB connects FUTA students: announcements, marketplace, food, tutorials, and lost & found.",
-  applicationName: "FUTAHUB",
-  appleWebApp: { capable: true, title: "FUTAHUB", statusBarStyle: "default" },
+    "FutaHub connects FUTA students through campus announcements, student marketplace listings, food and snacks, free tutorials, and lost and found reports.",
+  applicationName: "FutaHub",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "FutaHub",
+    statusBarStyle: "black-translucent",
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#1d4ed8",
+  themeColor: "#080d18",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{ children: React.ReactNode }>) {
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
     <html lang="en">
       <body className={inter.className}>{children}</body>

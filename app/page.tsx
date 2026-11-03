@@ -1,705 +1,2919 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
-import { supabase } from "./lib/supabase";
-type BeforeInstallPromptEvent = Event & {
-  readonly platforms: string[];
-  prompt: () => Promise<void>;
-  userChoice: Promise<{
-    outcome: "accepted" | "dismissed";
-    platform: string;
-  }>;
-};
-type Media = { url: string; type: string; name: string };
-type Post = {
-  id?: number;
-  user_id?: string | null;
-  name: string;
-  category: string;
-  time: string;
-  text: string;
-  image?: string | null;
-  whatsapp?: string | null;
-  attachment_url?: string | null;
-  attachment_name?: string | null;
-  attachment_type?: string | null;
-  details?: { values?: Record<string, string>; media?: Media[] } | null;
-};
-type Field = {
-  k: string;
-  label: string;
-  type?: "text" | "textarea" | "select" | "date" | "time" | "tel" | "number";
-  options?: string[];
-  required?: boolean;
-  placeholder?: string;
-};
-type Section = { key: string; label: string; icon: string; fields: Field[] };
+import { supabase } from "@/lib/supabase";
 
-const SECTIONS: Section[] = [
+type Section =
+  | "Announcements"
+  | "Student Marketplace"
+  | "Food & Snacks"
+  | "Tutorials Available"
+  | "Lost & Found";
+
+type Post = {
+  id: number | string;
+  created_at?: string;
+  title: string;
+  content?: string | null;
+  category: string;
+  user_id?: string;
+  location?: string | null;
+  price?: string | number | null;
+  whatsapp?: string | null;
+};
+
+type Screen = "home" | "section" | "saved" | "profile";
+
+const SECTIONS: {
+  name: Section;
+  short: string;
+  icon: string;
+  description: string;
+}[] = [
   {
-    key: "Announcements",
-    label: "Announcements",
+    name: "Announcements",
+    short: "Announcements",
     icon: "📢",
-    fields: [
-      { k: "title", label: "Title", required: true, placeholder: "What is the announcement?" },
-      { k: "details", label: "Details", type: "textarea", required: true },
-    ],
+    description: "Important updates and information from around FUTA.",
   },
   {
-    key: "For sale",
-    label: "Student Marketplace",
+    name: "Student Marketplace",
+    short: "Marketplace",
     icon: "🛍️",
-    fields: [
-      { k: "product", label: "Product name", required: true, placeholder: "e.g. iPhone 12" },
-      { k: "category", label: "Category", type: "select", required: true, options: ["Phones & Electronics", "Laptops", "Perfumes", "Clothes", "Shoes", "Accessories", "Other"] },
-      { k: "price", label: "Price (₦)", type: "number", required: true },
-      { k: "condition", label: "Condition", type: "select", required: true, options: ["Brand new", "Fairly used", "Used"] },
-      { k: "details", label: "Description", type: "textarea" },
-      { k: "location", label: "Location", required: true, placeholder: "Campus or off-campus area" },
-      { k: "whatsapp", label: "WhatsApp number", type: "tel", required: true, placeholder: "2348012345678" },
-    ],
+    description: "Buy and sell items with fellow FUTA students.",
   },
   {
-    key: "Food",
-    label: "Food & Snacks",
+    name: "Food & Snacks",
+    short: "Food & Snacks",
     icon: "🍔",
-    fields: [
-      { k: "item", label: "Food or snack", required: true, placeholder: "e.g. Jollof rice, chin chin" },
-      { k: "price", label: "Price (₦)", type: "number", required: true },
-      { k: "location", label: "Location", required: true },
-      { k: "hours", label: "Opening hours", placeholder: "e.g. 8am - 8pm" },
-      { k: "service", label: "Pickup or delivery", type: "select", options: ["Pickup", "Delivery", "Pickup and delivery"] },
-      { k: "details", label: "More details", type: "textarea" },
-      { k: "whatsapp", label: "WhatsApp number", type: "tel", required: true, placeholder: "2348012345678" },
-    ],
+    description: "Discover food, snacks and refreshments around campus.",
   },
   {
-    key: "Tutorials",
-    label: "Tutorials",
+    name: "Tutorials Available",
+    short: "Tutorials",
     icon: "📚",
-    fields: [
-      { k: "level", label: "Level", type: "select", required: true, options: ["100L", "200L"] },
-      { k: "course", label: "Course", required: true, placeholder: "e.g. MTH 101" },
-      { k: "date", label: "Date", type: "date", required: true },
-      { k: "from", label: "From", type: "time", required: true },
-      { k: "to", label: "To", type: "time", required: true },
-      { k: "location", label: "Location", required: true },
-      { k: "tutor", label: "Tutor's name", required: true },
-      { k: "sponsor", label: "Sponsored by", required: true },
-      { k: "details", label: "Extra notes", type: "textarea" },
-    ],
+    description: "Discover tutorials and academic support opportunities.",
   },
   {
-    key: "Lost and found",
-    label: "Lost & Found",
+    name: "Lost & Found",
+    short: "Lost & Found",
     icon: "🔎",
-    fields: [
-      { k: "kind", label: "Lost or found?", type: "select", required: true, options: ["Lost", "Found"] },
-      { k: "item", label: "Item", required: true, placeholder: "e.g. Black wallet" },
-      { k: "details", label: "Description", type: "textarea", required: true },
-      { k: "location", label: "Where?", required: true },
-      { k: "date", label: "Date", type: "date" },
-      { k: "whatsapp", label: "WhatsApp number", type: "tel", required: true, placeholder: "2348012345678" },
-    ],
+    description: "Help reunite lost belongings with their owners.",
   },
 ];
 
-const BUCKETS = { image: "post-images", video: "post-videos", file: "post-files" };
-const MAX_MB = 50;
-const MAX_FILES = 6;
-const ADMIN = (process.env.NEXT_PUBLIC_ADMIN_EMAIL || "").toLowerCase();
-const INPUT =
-  "min-h-12 w-full rounded-xl border border-slate-200 bg-white px-3 text-[15px] outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100";
-
-const sectionOf = (key: string) => SECTIONS.find((s) => s.key === key);
-const fmtDate = (d: string) => {
-  const t = new Date(d);
-  return Number.isNaN(t.getTime())
-    ? "Recently"
-    : t.toLocaleString("en-NG", { dateStyle: "medium", timeStyle: "short" });
+const CATEGORY_COLORS: Record<Section, string> = {
+  Announcements: "#438cff",
+  "Student Marketplace": "#36c7f4",
+  "Food & Snacks": "#f4b942",
+  "Tutorials Available": "#9b8cff",
+  "Lost & Found": "#39d6b0",
 };
 
-export default function Home() {
-  const [user, setUser] = useState<User | null>(null);
-  const [booting, setBooting] = useState(true);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [tab, setTab] = useState<"home" | "profile">("home");
-  const [section, setSection] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [level, setLevel] = useState("All");
-  const [installEvt, setInstallEvt] = useState<BeforeInstallPromptEvent | null>(null);
+function normalizeCategory(value: string): Section | null {
+  const category = value.toLowerCase().trim();
 
-  // auth form
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  if (category.includes("announcement")) return "Announcements";
+
+  if (
+    category.includes("market") ||
+    category.includes("sale") ||
+    category.includes("product")
+  ) {
+    return "Student Marketplace";
+  }
+
+  if (category.includes("food") || category.includes("snack")) {
+    return "Food & Snacks";
+  }
+
+  if (category.includes("tutorial") || category.includes("tutor")) {
+    return "Tutorials Available";
+  }
+
+  if (category.includes("lost") || category.includes("found")) {
+    return "Lost & Found";
+  }
+
+  return null;
+}
+
+function formatDate(date?: string) {
+  if (!date) return "Recently posted";
+
+  const parsed = new Date(date);
+
+  if (Number.isNaN(parsed.getTime())) return "Recently posted";
+
+  return parsed.toLocaleDateString("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+export default function HomePage() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const [authMsg, setAuthMsg] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
 
-  // composer
-  const [picker, setPicker] = useState(false);
-  const [composer, setComposer] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Post | null>(null);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [files, setFiles] = useState<File[]>([]);
-  const [oldMedia, setOldMedia] = useState<Media[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState("");
-  const cameraRef = useRef<HTMLInputElement>(null);
-  const videoCamRef = useRef<HTMLInputElement>(null);
-  const photoRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLInputElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [screen, setScreen] = useState<Screen>("home");
+  const [activeSection, setActiveSection] = useState<Section | null>(null);
 
-  const isAdmin = !!user?.email && user.email.toLowerCase() === ADMIN;
-  const myName = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "FUTA Student";
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [postsLoading, setPostsLoading] = useState(false);
+  const [postsError, setPostsError] = useState("");
+  const [search, setSearch] = useState("");
 
+  const [showPostForm, setShowPostForm] = useState(false);
+  const [posting, setPosting] = useState(false);
+  const [postMessage, setPostMessage] = useState("");
+
+  const [postTitle, setPostTitle] = useState("");
+  const [postContent, setPostContent] = useState("");
+  const [postCategory, setPostCategory] =
+    useState<Section>("Announcements");
+  const [postLocation, setPostLocation] = useState("");
+  const [postPrice, setPostPrice] = useState("");
+  const [postWhatsapp, setPostWhatsapp] = useState("");
+
+  const [savedIds, setSavedIds] = useState<(number | string)[]>([]);
+
+  // Restore the existing Supabase login session.
   useEffect(() => {
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
-    const onPrompt = (e: Event) => {
-  e.preventDefault();
-  setInstallEvt(e as BeforeInstallPromptEvent);
-};
+    let mounted = true;
 
-window.addEventListener("beforeinstallprompt", onPrompt);
+    async function loadSession() {
+      const { data } = await supabase.auth.getSession();
 
-    let alive = true;
-    supabase.auth.getUser().then(({ data }) => {
-      if (!alive) return;
-      setUser(data.user ?? null);
-      setBooting(false);
+      if (mounted) {
+        setUser(data.session?.user ?? null);
+        setAuthLoading(false);
+      }
+    }
+
+    void loadSession();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
     });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      if (alive) setUser(s?.user ?? null);
-    });
+
     return () => {
-      alive = false;
-      sub.subscription.unsubscribe();
-      window.removeEventListener("beforeinstallprompt", onPrompt);
+      mounted = false;
+      subscription.unsubscribe();
     };
   }, []);
 
-  useEffect(() => {
-    if (user) loadPosts();
-  }, [user]);
+  const loadPosts = useCallback(async () => {
+    setPostsLoading(true);
+    setPostsError("");
 
-  async function loadPosts() {
     const { data, error } = await supabase
       .from("posts")
       .select("*")
-      .order("id", { ascending: false })
-      .limit(300);
-    if (error) console.error(error.message);
-    else setPosts((data ?? []) as Post[]);
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      setPostsError(
+        "We couldn't load the posts. Please check your connection and try again."
+      );
+      setPostsLoading(false);
+      return;
+    }
+
+    setPosts((data ?? []) as Post[]);
+    setPostsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (user) {
+      void loadPosts();
+    } else {
+      setPosts([]);
+    }
+  }, [user, loadPosts]);
+
+  // Open a category immediately. Do not scroll the user down the homepage.
+  function openSection(section: Section) {
+    setActiveSection(section);
+    setScreen("section");
+    setSearch("");
+    setShowPostForm(false);
+    setPostMessage("");
   }
 
-  async function handleAuth() {
-    setAuthMsg("");
-    if (!email.trim() || !password) return setAuthMsg("Enter your email and password.");
-    if (mode === "signup" && !fullName.trim()) return setAuthMsg("Enter your full name.");
-    if (mode === "signup" && password.length < 6) return setAuthMsg("Password must be at least 6 characters.");
+  function goHome() {
+    setScreen("home");
+    setActiveSection(null);
+    setShowPostForm(false);
+    setSearch("");
+  }
+
+  function openPostForm(section?: Section) {
+    setPostCategory(section ?? activeSection ?? "Announcements");
+    setPostTitle("");
+    setPostContent("");
+    setPostLocation("");
+    setPostPrice("");
+    setPostWhatsapp("");
+    setPostMessage("");
+    setShowPostForm(true);
+  }
+
+  async function handleAuth(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setAuthBusy(true);
+    setAuthMessage("");
+
     try {
-      if (mode === "signup") {
+      if (authMode === "signup") {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { full_name: fullName.trim() } },
+          options: {
+            data: {
+              full_name: fullName.trim(),
+            },
+          },
         });
+
         if (error) throw error;
-        if (data.session) setUser(data.user);
-        else setAuthMsg("Account created. Check your email for the confirmation link, then log in.");
+
+        if (data.session) {
+          setUser(data.session.user);
+        } else {
+          setAuthMessage(
+            "Account created. Check your email to confirm your account, then sign in."
+          );
+        }
       } else {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: email.trim(),
+          password,
+        });
+
         if (error) throw error;
+
         setUser(data.user);
+        setAuthMessage("");
       }
-      setPassword("");
-    } catch (e) {
-      setAuthMsg(e instanceof Error ? e.message : "Something went wrong. Try again.");
+    } catch (error) {
+      setAuthMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again."
+      );
     } finally {
       setAuthBusy(false);
     }
   }
 
-  async function logout() {
-    await supabase.auth.signOut();
+  async function handleLogout() {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      setPostsError("Unable to sign out. Please try again.");
+      return;
+    }
+
     setUser(null);
-    setTab("home");
-    setSection(null);
+    setScreen("home");
+    setActiveSection(null);
+    setShowPostForm(false);
   }
 
-  async function install() {
-    if (!installEvt) return;
-    installEvt.prompt();
-    await installEvt.userChoice;
-    setInstallEvt(null);
-  }
+  async function publishPost(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
 
-  /* ---------- composer ---------- */
-  function openComposer(key: string, post?: Post) {
-    const sec = sectionOf(key)!;
-    const base: Record<string, string> = {};
-    sec.fields.forEach((f) => (base[f.k] = f.type === "select" ? f.options?.[0] ?? "" : ""));
-    setValues(post?.details?.values ? { ...base, ...post.details.values } : post ? { ...base, details: post.text } : base);
-    setOldMedia(post?.details?.media ?? []);
-    setFiles([]);
-    setEditing(post ?? null);
-    setMsg("");
-    setPicker(false);
-    setComposer(key);
-  }
-
-  function closeComposer() {
-    setComposer(null);
-    setEditing(null);
-    setFiles([]);
-    setMsg("");
-  }
-
-  function addFiles(list: FileList | null) {
-    if (!list) return;
-    const next = [...files];
-    for (const f of Array.from(list)) {
-      if (f.size > MAX_MB * 1024 * 1024) {
-        setMsg(`"${f.name}" is larger than ${MAX_MB}MB.`);
-        continue;
-      }
-      if (next.length + oldMedia.length >= MAX_FILES) {
-        setMsg(`You can attach up to ${MAX_FILES} files.`);
-        break;
-      }
-      next.push(f);
+    if (!user) {
+      setPostMessage("Please sign in before publishing a post.");
+      return;
     }
-    setFiles(next);
-  }
 
-  const previews = useMemo(() => files.map((f) => ({ f, url: URL.createObjectURL(f) })), [files]);
-  useEffect(() => () => previews.forEach((p) => URL.revokeObjectURL(p.url)), [previews]);
+    if (!postTitle.trim()) {
+      setPostMessage("Please enter a title for your post.");
+      return;
+    }
 
-  async function upload(file: File, uid: string): Promise<Media> {
-    const bucket = file.type.startsWith("image/")
-      ? BUCKETS.image
-      : file.type.startsWith("video/")
-        ? BUCKETS.video
-        : BUCKETS.file;
-    const path = `${uid}/${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-    const { error } = await supabase.storage
-      .from(bucket)
-      .upload(path, file, { contentType: file.type || "application/octet-stream" });
-    if (error) throw new Error(`Upload failed: ${error.message}`);
-    return {
-      url: supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl,
-      type: file.type || "application/octet-stream",
-      name: file.name,
+    setPosting(true);
+    setPostMessage("");
+
+    const payload: Record<string, unknown> = {
+      title: postTitle.trim(),
+      content: postContent.trim(),
+      category: postCategory,
+      user_id: user.id,
     };
-  }
 
-  async function submit() {
-    if (!user || !composer) return;
-    const sec = sectionOf(composer)!;
-    for (const f of sec.fields) {
-      if (f.required && !values[f.k]?.trim()) return setMsg(`Please fill in: ${f.label}`);
+    // Keep optional fields empty when the student leaves them blank.
+    if (postLocation.trim()) {
+      payload.location = postLocation.trim();
     }
-    if (values.whatsapp && !/^[+\d\s()-]{7,20}$/.test(values.whatsapp.trim()))
-      return setMsg("Enter a valid WhatsApp number, e.g. 2348012345678.");
-    if (composer === "Tutorials" && values.from && values.to && values.to <= values.from)
-      return setMsg("The end time must be after the start time.");
-    if (composer === "Lost and found" && files.length + oldMedia.length === 0)
-      return setMsg("Add a photo or video of the item.");
 
-    setBusy(true);
-    setMsg("");
-    try {
-      const uploaded: Media[] = [];
-      for (const f of files) uploaded.push(await upload(f, user.id));
-      const media = [...oldMedia, ...uploaded];
-      const first = media[0];
-      const clean = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.trim()]));
-      const row = {
-        user_id: user.id,
-        name: myName,
-        category: composer,
-        time: editing?.time ?? new Date().toISOString(),
-        text: [clean[sec.fields[0].k], clean.details].filter(Boolean).join(" - "),
-        image: media.find((m) => m.type.startsWith("image/"))?.url ?? null,
-        whatsapp: clean.whatsapp || null,
-        attachment_url: first?.url ?? null,
-        attachment_name: first?.name ?? null,
-        attachment_type: first?.type ?? null,
-        details: { values: clean, media },
-      };
-      const q = editing?.id
-        ? supabase.from("posts").update(row).eq("id", editing.id).eq("user_id", user.id)
-        : supabase.from("posts").insert(row);
-      const { error } = await q;
-      if (error) throw error;
-      closeComposer();
-      setSection(composer);
-      setTab("home");
-      await loadPosts();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "Could not publish. Try again.");
-    } finally {
-      setBusy(false);
+    if (postPrice.trim()) {
+      payload.price = postPrice.trim();
     }
+
+    if (postWhatsapp.trim()) {
+      payload.whatsapp = postWhatsapp.trim();
+    }
+
+    const { error } = await supabase.from("posts").insert(payload);
+
+    if (error) {
+      setPostMessage(
+        `Could not publish your post: ${error.message}. Check that your Supabase posts table has the required columns.`
+      );
+      setPosting(false);
+      return;
+    }
+
+    setPosting(false);
+    setShowPostForm(false);
+    setPostTitle("");
+    setPostContent("");
+    setPostLocation("");
+    setPostPrice("");
+    setPostWhatsapp("");
+
+    await loadPosts();
+    setScreen("section");
+    setActiveSection(postCategory);
   }
 
-  async function removePost(p: Post) {
-    if (!p.id || !user) return;
-    if (!window.confirm("Delete this post? This cannot be undone.")) return;
-    let q = supabase.from("posts").delete().eq("id", p.id);
-    if (!isAdmin) q = q.eq("user_id", user.id);
-    const { error } = await q;
-    if (error) return alert(`Could not delete: ${error.message}`);
-    loadPosts();
+  function toggleSaved(id: number | string) {
+    setSavedIds((current) =>
+      current.includes(id)
+        ? current.filter((savedId) => savedId !== id)
+        : [...current, id]
+    );
   }
 
-  async function report(p: Post) {
-    if (!p.id || !user) return;
-    const { error } = await supabase.from("reports").insert({ post_id: p.id, reporter_id: user.id });
-    alert(error ? "Could not send report. Try again." : "Thanks. The post has been reported.");
-  }
+  const visiblePosts = posts.filter((post) => {
+    const matchesSection =
+      screen !== "section" ||
+      !activeSection ||
+      normalizeCategory(post.category) === activeSection;
 
-  /* ---------- filtering ---------- */
-  const visible = posts.filter((p) => {
-    if (section && p.category !== section) return false;
-    if (section === "Tutorials" && level !== "All" && p.details?.values?.level !== level) return false;
-    const q = search.toLowerCase().trim();
-    if (!q) return true;
-    const hay = [p.text, p.name, p.category, ...Object.values(p.details?.values ?? {})].join(" ").toLowerCase();
-    return hay.includes(q);
+    const matchesSearch =
+      !search.trim() ||
+      `${post.title} ${post.content ?? ""} ${post.location ?? ""} ${post.category}`
+        .toLowerCase()
+        .includes(search.toLowerCase());
+
+    const matchesSaved =
+      screen !== "saved" || savedIds.includes(post.id);
+
+    return matchesSection && matchesSearch && matchesSaved;
   });
-  const shown = !section && !search.trim() ? visible.slice(0, 8) : visible;
 
-  /* ---------- views ---------- */
-  function renderMedia(p: Post) {
-    const list: Media[] = p.details?.media?.length
-      ? p.details.media
-      : p.attachment_url || p.image
-        ? [{ url: (p.attachment_url || p.image)!, type: p.attachment_type || "image/*", name: p.attachment_name || "Attachment" }]
-        : [];
-    if (!list.length) return null;
+  // Authentication loading screen.
+  if (authLoading) {
     return (
-      <div className={`mt-3 grid gap-2 ${list.length > 1 ? "grid-cols-2" : ""}`}>
-        {list.map((m, i) =>
-          m.type.startsWith("video/") ? (
-            <video key={i} controls preload="metadata" className="w-full max-h-96 rounded-xl bg-black" src={m.url} />
-          ) : m.type.startsWith("image/") ? (
-            <a key={i} href={m.url} target="_blank" rel="noreferrer">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={m.url} alt={m.name} className="w-full max-h-96 rounded-xl border border-slate-100 bg-slate-50 object-cover" />
-            </a>
-          ) : (
-            <a key={i} href={m.url} target="_blank" rel="noreferrer" className="flex min-h-12 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm font-semibold text-blue-700 break-all">
-              📄 {m.name}
-            </a>
-          )
-        )}
-      </div>
+      <main className="loading-screen">
+        <div className="loading-logo">F</div>
+        <h2>FutaHub</h2>
+        <p>Preparing your campus space...</p>
+        <div className="loading-bar">
+          <span />
+        </div>
+        <style jsx global>{styles}</style>
+      </main>
     );
   }
 
-  function renderPost(p: Post) {
-    const sec = sectionOf(p.category);
-    const v = p.details?.values;
-    const own = !!user && p.user_id === user.id;
-    const titleKey = sec?.fields[0].k;
+  // LOGIN AND SIGN-UP: one centred card, no left-side introduction.
+  if (!user) {
     return (
-      <article key={p.id ?? p.time} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 font-bold text-blue-800">
-            {p.name.charAt(0).toUpperCase()}
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="break-words font-bold leading-tight">{p.name}</p>
-            <p className="text-xs text-slate-500">
-              {sec?.icon ?? "📌"} {sec?.label ?? p.category} · {fmtDate(p.time)}
-            </p>
-          </div>
-        </div>
+      <main className="auth-page">
+        <div className="auth-glow auth-glow-one" />
+        <div className="auth-glow auth-glow-two" />
 
-        {v && sec ? (
-          <div className="mt-3">
-            <h3 className="break-words text-lg font-extrabold leading-snug text-slate-900">
-              {p.category === "Tutorials" && v.level ? `${v.level} · ` : ""}
-              {p.category === "Lost and found" && v.kind ? `${v.kind}: ` : ""}
-              {v[titleKey!]}
-            </h3>
-            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-              {sec.fields
-                .filter((f) => !["details", "whatsapp", "level", "kind", titleKey].includes(f.k) && v[f.k])
-                .map((f) => (
-                  <div key={f.k} className="contents">
-                    <dt className="text-slate-500">{f.label}</dt>
-                    <dd className="break-words font-semibold text-slate-800">
-                      {f.k === "price" ? `₦${Number(v[f.k]).toLocaleString()}` : v[f.k]}
-                    </dd>
-                  </div>
-                ))}
-            </dl>
-            {v.details && <p className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-700">{v.details}</p>}
-          </div>
-        ) : (
-          <p className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-700">{p.text}</p>
-        )}
-
-        {renderMedia(p)}
-
-        {p.whatsapp && (
-          <a
-            href={`https://wa.me/${p.whatsapp.replace(/\D/g, "")}`}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-3 flex min-h-12 items-center justify-center rounded-xl bg-green-600 font-bold text-white active:bg-green-700"
-          >
-            Chat on WhatsApp
-          </a>
-        )}
-
-        <div className="mt-3 flex flex-wrap gap-1 border-t border-slate-100 pt-2 text-sm font-semibold">
-          {own && (
-            <button className="min-h-10 rounded-lg px-3 text-blue-700" onClick={() => openComposer(p.category, p)}>Edit</button>
-          )}
-          {(own || isAdmin) && (
-            <button className="min-h-10 rounded-lg px-3 text-red-600" onClick={() => removePost(p)}>Delete</button>
-          )}
-          {!own && (
-            <button className="min-h-10 rounded-lg px-3 text-slate-500" onClick={() => report(p)}>Report</button>
-          )}
-        </div>
-      </article>
-    );
-  }
-
-  /* ---------- LOGIN FIRST ---------- */
-  if (booting)
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-blue-700">
-        <div className="text-center text-white">
-          <div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-white/30 border-t-white" />
-          <p className="text-2xl font-extrabold tracking-wide">FUTAHUB</p>
-        </div>
-      </div>
-    );
-
-  if (!user)
-    return (
-      <div className="flex min-h-screen flex-col bg-white">
-        <div className="bg-blue-700 px-6 pb-12 pt-14 text-center text-white" style={{ paddingTop: "max(56px, env(safe-area-inset-top))" }}>
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-white text-3xl">🎓</div>
-          <h1 className="text-4xl font-extrabold tracking-wide">FUTAHUB</h1>
-          <p className="mt-1 text-blue-100">Your Campus, Your Community</p>
-        </div>
-        <div className="-mt-6 flex-1 rounded-t-3xl bg-white px-6 pb-10 pt-6">
-          <div className="mx-auto w-full max-w-md">
-            <div className="mb-5 grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
-              {(["login", "signup"] as const).map((m) => (
-                <button key={m} onClick={() => { setMode(m); setAuthMsg(""); }} className={`min-h-11 rounded-lg text-sm font-bold ${mode === m ? "bg-white text-blue-800 shadow-sm" : "text-slate-500"}`}>
-                  {m === "login" ? "Log in" : "Create account"}
-                </button>
-              ))}
+        <section className="auth-layout">
+          <div className="auth-card">
+            <div className="mobile-brand">
+              <div className="brand-mark">F</div>
+              <span>
+                Futa<span className="brand-blue">Hub</span>
+              </span>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); handleAuth(); }} className="space-y-4">
-              {mode === "signup" && (
-                <input className={INPUT} placeholder="Full name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+
+            <div className="auth-card-heading">
+              <div className="auth-mini-icon">
+                {authMode === "login" ? "↗" : "+"}
+              </div>
+
+              <h2>
+                {authMode === "login"
+                  ? "Welcome back"
+                  : "Join the community"}
+              </h2>
+
+              <p>
+                {authMode === "login"
+                  ? "Sign in to continue to your campus."
+                  : "Create an account to get started."}
+              </p>
+            </div>
+
+            <form onSubmit={handleAuth} className="auth-form">
+              {authMode === "signup" && (
+                <label>
+                  Full name
+                  <input
+                    type="text"
+                    placeholder="Enter your full name"
+                    value={fullName}
+                    onChange={(event) => setFullName(event.target.value)}
+                    required
+                    autoComplete="name"
+                  />
+                </label>
               )}
-              <input className={INPUT} type="email" placeholder="Email address" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-              <input className={INPUT} type="password" placeholder="Password (min. 6 characters)" autoComplete={mode === "login" ? "current-password" : "new-password"} value={password} onChange={(e) => setPassword(e.target.value)} />
-              {authMsg && <p className="rounded-xl bg-blue-50 p-3 text-sm text-blue-800">{authMsg}</p>}
-              <button type="submit" disabled={authBusy} className="min-h-12 w-full rounded-xl bg-blue-700 font-bold text-white disabled:opacity-60">
-                {authBusy ? "Please wait..." : mode === "login" ? "Log in" : "Create account"}
+
+              <label>
+                Email address
+                <input
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  required
+                  autoComplete="email"
+                />
+              </label>
+
+              <label>
+                Password
+                <input
+                  type="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  required
+                  minLength={6}
+                  autoComplete={
+                    authMode === "login"
+                      ? "current-password"
+                      : "new-password"
+                  }
+                />
+              </label>
+
+              {authMessage && (
+                <div className="message-box" role="status">
+                  {authMessage}
+                </div>
+              )}
+
+              <button
+                className="primary-button auth-submit"
+                disabled={authBusy}
+              >
+                {authBusy
+                  ? "Please wait..."
+                  : authMode === "login"
+                    ? "Sign in to FutaHub"
+                    : "Create my account"}
+                {!authBusy && <span>→</span>}
               </button>
             </form>
-            {installEvt && (
-              <button onClick={install} className="mt-4 min-h-12 w-full rounded-xl border border-blue-200 font-bold text-blue-700">
-                Install FUTAHUB app
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
 
-  /* ---------- APP ---------- */
-  const sec = section ? sectionOf(section) : null;
+            <div className="auth-switch">
+              {authMode === "login"
+                ? "New to FutaHub?"
+                : "Already have an account?"}
+
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode(
+                    authMode === "login" ? "signup" : "login"
+                  );
+                  setAuthMessage("");
+                }}
+              >
+                {authMode === "login" ? "Create account" : "Sign in"}
+              </button>
+            </div>
+
+            <p className="auth-security">
+              <span>●</span> A community space for FUTA students
+            </p>
+          </div>
+        </section>
+
+        <style jsx global>{styles}</style>
+      </main>
+    );
+  }
+
+  const sectionInfo = activeSection
+    ? SECTIONS.find((section) => section.name === activeSection)
+    : null;
 
   return (
-    <div className="min-h-screen bg-slate-50 pb-28">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-        <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4">
-          {sec && tab === "home" ? (
-            <button onClick={() => { setSection(null); setSearch(""); }} className="flex h-10 w-10 items-center justify-center rounded-xl text-xl hover:bg-slate-100" aria-label="Back">←</button>
-          ) : (
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-700 text-xl text-white">🎓</div>
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-lg font-extrabold leading-tight tracking-wide text-blue-800">
-              {sec && tab === "home" ? sec.label : "FUTAHUB"}
-            </p>
-            {!(sec && tab === "home") && <p className="text-xs text-slate-500">Your Campus, Your Community</p>}
-          </div>
+    <main className="app-shell">
+      <div className="ambient-glow" />
+
+      <header className="topbar">
+        <button className="brand-lockup brand-button" onClick={goHome}>
+          <div className="brand-mark">F</div>
+          <span>
+            Futa<span className="brand-blue">Hub</span>
+          </span>
+        </button>
+
+        <div className="topbar-campus">
+          <span className="campus-dot" />
+          FUTA STUDENT COMMUNITY
         </div>
+
+        <button
+          className="avatar-button"
+          onClick={() => setScreen("profile")}
+          aria-label="Open profile"
+          title="My profile"
+        >
+          {(user.user_metadata?.full_name || user.email || "S")
+            .charAt(0)
+            .toUpperCase()}
+        </button>
       </header>
 
-      <main className="mx-auto max-w-3xl px-4 py-4">
-        {tab === "profile" ? (
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-5 text-center shadow-sm">
-              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-blue-100 text-2xl font-bold text-blue-800">{myName.charAt(0).toUpperCase()}</div>
-              <p className="mt-3 text-lg font-bold">{myName}</p>
-              <p className="break-all text-sm text-slate-500">{user.email}</p>
-            </div>
-            {installEvt && <button onClick={install} className="min-h-12 w-full rounded-xl bg-blue-700 font-bold text-white">Install FUTAHUB app</button>}
-            <button onClick={logout} className="min-h-12 w-full rounded-xl border border-slate-200 bg-white font-bold text-red-600">Log out</button>
-          </div>
-        ) : (
+      <div className="app-content">
+        {screen === "home" && (
           <>
-            <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
-              {!sec && <p className="mb-2 text-lg font-bold">What do you need?</p>}
-              <input className={`${INPUT} bg-slate-50`} placeholder={sec ? `Search ${sec.label}...` : "Search campus information..."} value={search} onChange={(e) => setSearch(e.target.value)} />
-            </div>
-
-            {!sec && !search.trim() && (
-              <div className="mb-6 grid grid-cols-2 gap-3">
-                {SECTIONS.map((s, i) => (
-                  <button key={s.key} onClick={() => { setSection(s.key); setLevel("All"); }} className={`flex min-h-[104px] flex-col justify-between rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm active:bg-blue-50 ${i === SECTIONS.length - 1 ? "col-span-2" : ""}`}>
-                    <span className="text-3xl">{s.icon}</span>
-                    <span className="font-bold text-slate-800">{s.label}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {sec?.key === "Tutorials" && (
-              <div className="mb-4 flex gap-2">
-                {["All", "100L", "200L"].map((l) => (
-                  <button key={l} onClick={() => setLevel(l)} className={`min-h-10 rounded-full px-4 text-sm font-bold ${level === l ? "bg-blue-700 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200"}`}>{l}</button>
-                ))}
-              </div>
-            )}
-
-            {sec && (
-              <button onClick={() => openComposer(sec.key)} className="mb-4 min-h-12 w-full rounded-xl bg-blue-700 font-bold text-white">
-                + Post in {sec.label}
-              </button>
-            )}
-
-            {!sec && !search.trim() && <h2 className="mb-3 text-lg font-extrabold">Latest updates</h2>}
-
-            <div className="space-y-4">
-              {shown.map(renderPost)}
-              {shown.length === 0 && (
-                <div className="rounded-2xl border border-slate-200 bg-white px-5 py-12 text-center">
-                  <p className="text-4xl">{sec?.icon ?? "📰"}</p>
-                  <p className="mt-3 font-bold">Nothing here yet</p>
-                  <p className="mt-1 text-sm text-slate-500">Be the first to post.</p>
+            <section className="hero-panel">
+              <div className="hero-copy">
+                <div className="eyebrow">
+                  <span className="live-dot" />
+                  YOUR CAMPUS, CONNECTED
                 </div>
-              )}
-            </div>
+
+                <h1>
+                  Everything happening
+                  <br />
+                  <span>around your campus.</span>
+                </h1>
+
+                <p>
+                  Discover updates, find what you need, and connect with
+                  your fellow FUTA students.
+                </p>
+
+                <button
+                  className="primary-button hero-button"
+                  onClick={() => openSection("Announcements")}
+                >
+                  Explore campus <span>→</span>
+                </button>
+              </div>
+
+              <div className="hero-art" aria-hidden="true">
+                <div className="orbit orbit-one" />
+                <div className="orbit orbit-two" />
+                <div className="hero-symbol">F</div>
+                <div className="floating-card floating-card-top">
+                  <span>●</span> Campus updates
+                </div>
+                <div className="floating-card floating-card-bottom">
+                  <span>✦</span> Student community
+                </div>
+              </div>
+
+              <div className="hero-index">01 / CAMPUS LIFE</div>
+            </section>
+
+            <section className="section-heading">
+              <div>
+                <span className="section-kicker">YOUR CAMPUS, YOUR SPACE</span>
+                <h2>Explore FutaHub</h2>
+                <p>Choose a space and jump straight in.</p>
+              </div>
+
+              <span className="section-count">05 SPACES</span>
+            </section>
+
+            <section className="category-grid">
+              {SECTIONS.map((section, index) => (
+                <button
+                  key={section.name}
+                  className={`category-card category-card-${index + 1} ${
+                    index === 4 ? "category-wide" : ""
+                  }`}
+                  onClick={() => openSection(section.name)}
+                >
+                  <div className="category-card-top">
+                    <span
+                      className="category-icon"
+                      style={{
+                        color: CATEGORY_COLORS[section.name],
+                      }}
+                    >
+                      {section.icon}
+                    </span>
+
+                    <span className="category-arrow">↗</span>
+                  </div>
+
+                  <div className="category-card-copy">
+                    <h3>{section.name}</h3>
+                    <p>{section.description}</p>
+                  </div>
+
+                  <div className="category-card-bottom">
+                    <span>OPEN SPACE</span>
+                    <span className="category-line" />
+                  </div>
+                </button>
+              ))}
+            </section>
+
+            <section className="recent-heading">
+              <div>
+                <span className="section-kicker">WHAT'S HAPPENING</span>
+                <h2>Latest from campus</h2>
+              </div>
+
+              <button
+                className="text-button"
+                onClick={() => openSection("Announcements")}
+              >
+                View announcements <span>→</span>
+              </button>
+            </section>
+
+            {postsLoading ? (
+              <div className="empty-panel">
+                <div className="spinner" />
+                <p>Loading campus posts...</p>
+              </div>
+            ) : postsError ? (
+              <div className="notice-panel">{postsError}</div>
+            ) : posts.length === 0 ? (
+              <div className="empty-panel">
+                <div className="empty-icon">✦</div>
+                <h3>Your campus feed starts here</h3>
+                <p>
+                  There are no posts yet. Be among the first students to
+                  share something useful.
+                </p>
+                <button
+                  className="primary-button"
+                  onClick={() => openPostForm()}
+                >
+                  Create a post <span>→</span>
+                </button>
+              </div>
+            ) : (
+              <PostList
+                posts={posts.slice(0, 4)}
+                savedIds={savedIds}
+                onSave={toggleSaved}
+              />
+            )}
           </>
         )}
-      </main>
 
-      {/* bottom navigation */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        <div className="mx-auto grid max-w-3xl grid-cols-3">
-          <button onClick={() => { setTab("home"); setSection(null); setSearch(""); }} className={`flex min-h-16 flex-col items-center justify-center text-xs font-bold ${tab === "home" ? "text-blue-700" : "text-slate-500"}`}><span className="text-xl">🏠</span>Home</button>
-          <button onClick={() => (sec && tab === "home" ? openComposer(sec.key) : setPicker(true))} className="flex min-h-16 flex-col items-center justify-center text-xs font-bold text-blue-700"><span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-700 text-2xl leading-none text-white">+</span>Post</button>
-          <button onClick={() => setTab("profile")} className={`flex min-h-16 flex-col items-center justify-center text-xs font-bold ${tab === "profile" ? "text-blue-700" : "text-slate-500"}`}><span className="text-xl">👤</span>Profile</button>
-        </div>
-      </nav>
+        {screen === "section" && activeSection && (
+          <section className="section-page">
+            <button className="back-button" onClick={goHome}>
+              <span>←</span> Back to home
+            </button>
 
-      {/* section picker */}
-      {picker && (
-        <div className="fixed inset-0 z-40 flex items-end bg-slate-950/50" onClick={() => setPicker(false)}>
-          <div className="mx-auto w-full max-w-3xl rounded-t-3xl bg-white p-5" style={{ paddingBottom: "max(20px, env(safe-area-inset-bottom))" }} onClick={(e) => e.stopPropagation()}>
-            <p className="mb-3 text-lg font-extrabold">What do you want to post?</p>
-            <div className="space-y-2">
-              {SECTIONS.map((s) => (
-                <button key={s.key} onClick={() => openComposer(s.key)} className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-slate-200 px-4 text-left font-bold active:bg-blue-50"><span className="text-2xl">{s.icon}</span>{s.label}</button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* composer */}
-      {composer && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-white">
-          <div className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 px-4" style={{ paddingTop: "env(safe-area-inset-top)" }}>
-            <button onClick={closeComposer} className="min-h-10 px-1 font-semibold text-slate-600">Cancel</button>
-            <p className="font-extrabold">{editing ? "Edit" : "New"} {sectionOf(composer)!.label}</p>
-            <button onClick={submit} disabled={busy} className="min-h-10 rounded-lg bg-blue-700 px-4 font-bold text-white disabled:opacity-60">{busy ? "..." : editing ? "Save" : "Post"}</button>
-          </div>
-          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-            <div className="mx-auto max-w-xl space-y-4">
-              {sectionOf(composer)!.fields.map((f) => (
-                <div key={f.k}>
-                  <label className="mb-1 block text-sm font-semibold text-slate-700">{f.label}{f.required ? " *" : ""}</label>
-                  {f.type === "textarea" ? (
-                    <textarea rows={4} className={`${INPUT} py-3`} value={values[f.k] ?? ""} onChange={(e) => setValues({ ...values, [f.k]: e.target.value })} />
-                  ) : f.type === "select" ? (
-                    <select className={INPUT} value={values[f.k] ?? ""} onChange={(e) => setValues({ ...values, [f.k]: e.target.value })}>
-                      {f.options!.map((o) => <option key={o}>{o}</option>)}
-                    </select>
-                  ) : (
-                    <input className={INPUT} type={f.type ?? "text"} inputMode={f.type === "number" ? "numeric" : undefined} placeholder={f.placeholder} value={values[f.k] ?? ""} onChange={(e) => setValues({ ...values, [f.k]: e.target.value })} />
-                  )}
-                </div>
-              ))}
-
-              <div className="rounded-xl border border-dashed border-slate-300 p-4">
-                <p className="mb-3 font-semibold">Add photos, video or files{composer === "Lost and found" ? " *" : ""}</p>
-                <div className="grid grid-cols-2 gap-2 text-sm font-bold text-blue-800">
-                  <button type="button" onClick={() => cameraRef.current?.click()} className="min-h-12 rounded-xl bg-blue-50">📷 Take photo</button>
-                  <button type="button" onClick={() => videoCamRef.current?.click()} className="min-h-12 rounded-xl bg-blue-50">🎥 Record video</button>
-                  <button type="button" onClick={() => photoRef.current?.click()} className="min-h-12 rounded-xl bg-blue-50">🖼️ Choose photos</button>
-                  <button type="button" onClick={() => videoRef.current?.click()} className="min-h-12 rounded-xl bg-blue-50">🎞️ Choose video</button>
-                  <button type="button" onClick={() => fileRef.current?.click()} className="col-span-2 min-h-12 rounded-xl bg-blue-50">📎 Choose a file</button>
-                </div>
-                <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-                <input ref={videoCamRef} type="file" accept="video/*" capture="environment" hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-                <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-                <input ref={videoRef} type="file" accept="video/*" hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-                <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" hidden onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-                <p className="mt-2 text-xs text-slate-500">Up to {MAX_FILES} files, {MAX_MB}MB each.</p>
-
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  {oldMedia.map((m, i) => (
-                    <div key={`o${i}`} className="relative">
-                      <Thumb type={m.type} url={m.url} name={m.name} />
-                      <button onClick={() => setOldMedia(oldMedia.filter((_, j) => j !== i))} className="absolute right-1 top-1 h-6 w-6 rounded-full bg-black/70 text-white" aria-label="Remove">×</button>
-                    </div>
-                  ))}
-                  {previews.map((p, i) => (
-                    <div key={`n${i}`} className="relative">
-                      <Thumb type={p.f.type} url={p.url} name={p.f.name} />
-                      <button onClick={() => setFiles(files.filter((_, j) => j !== i))} className="absolute right-1 top-1 h-6 w-6 rounded-full bg-black/70 text-white" aria-label="Remove">×</button>
-                    </div>
-                  ))}
-                </div>
+            <div
+              className="section-hero"
+              style={{
+                borderTopColor: CATEGORY_COLORS[activeSection],
+              }}
+            >
+              <div
+                className="section-hero-icon"
+                style={{
+                  color: CATEGORY_COLORS[activeSection],
+                }}
+              >
+                {sectionInfo?.icon}
               </div>
 
-              {msg && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{msg}</p>}
-              <button onClick={submit} disabled={busy} className="min-h-12 w-full rounded-xl bg-blue-700 font-bold text-white disabled:opacity-60">
-                {busy ? "Publishing..." : editing ? "Save changes" : "Publish post"}
+              <div className="section-hero-copy">
+                <span className="section-kicker">FUTAHUB / CAMPUS SPACE</span>
+                <h1>{activeSection}</h1>
+                <p>{sectionInfo?.description}</p>
+              </div>
+
+              <button
+                className="primary-button section-post-button"
+                onClick={() => openPostForm(activeSection)}
+              >
+                + Create post
               </button>
             </div>
-          </div>
+
+            <div className="feed-toolbar">
+              <div>
+                <h2>Community feed</h2>
+                <p>Explore posts shared by fellow students.</p>
+              </div>
+
+              <span className="feed-count">
+                {visiblePosts.length}{" "}
+                {visiblePosts.length === 1 ? "POST" : "POSTS"}
+              </span>
+            </div>
+
+            <div className="search-box">
+              <span>⌕</span>
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder={`Search ${activeSection.toLowerCase()}...`}
+              />
+
+              {search && (
+                <button
+                  onClick={() => setSearch("")}
+                  aria-label="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {postsLoading ? (
+              <div className="empty-panel">
+                <div className="spinner" />
+                <p>Loading posts...</p>
+              </div>
+            ) : postsError ? (
+              <div className="notice-panel">{postsError}</div>
+            ) : visiblePosts.length === 0 ? (
+              <div className="empty-panel section-empty">
+                <div className="empty-icon">
+                  {sectionInfo?.icon ?? "✦"}
+                </div>
+                <h3>
+                  {search
+                    ? "No matching posts found"
+                    : `No posts in ${activeSection} yet`}
+                </h3>
+                <p>
+                  {search
+                    ? "Try another search term."
+                    : "Start the conversation by sharing the first post in this space."}
+                </p>
+                {!search && (
+                  <button
+                    className="primary-button"
+                    onClick={() => openPostForm(activeSection)}
+                  >
+                    Create the first post <span>→</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <PostList
+                posts={visiblePosts}
+                savedIds={savedIds}
+                onSave={toggleSaved}
+              />
+            )}
+          </section>
+        )}
+
+        {screen === "saved" && (
+          <section className="section-page">
+            <div className="simple-page-heading">
+              <span className="section-kicker">YOUR COLLECTION</span>
+              <h1>Saved posts</h1>
+              <p>Posts you've bookmarked for later.</p>
+            </div>
+
+            {visiblePosts.length === 0 ? (
+              <div className="empty-panel">
+                <div className="empty-icon">♡</div>
+                <h3>No saved posts yet</h3>
+                <p>
+                  Tap the bookmark on any post to keep it here.
+                </p>
+                <button className="primary-button" onClick={goHome}>
+                  Explore FutaHub <span>→</span>
+                </button>
+              </div>
+            ) : (
+              <PostList
+                posts={visiblePosts}
+                savedIds={savedIds}
+                onSave={toggleSaved}
+              />
+            )}
+          </section>
+        )}
+
+        {screen === "profile" && (
+          <section className="section-page profile-page">
+            <div className="simple-page-heading">
+              <span className="section-kicker">YOUR ACCOUNT</span>
+              <h1>My profile</h1>
+              <p>Manage your FutaHub account.</p>
+            </div>
+
+            <div className="profile-card">
+              <div className="profile-avatar">
+                {(user.user_metadata?.full_name || user.email || "S")
+                  .charAt(0)
+                  .toUpperCase()}
+              </div>
+
+              <div className="profile-details">
+                <h2>
+                  {user.user_metadata?.full_name || "FUTA Student"}
+                </h2>
+                <p>{user.email}</p>
+                <span className="profile-badge">
+                  <span className="live-dot" />
+                  Signed in
+                </span>
+              </div>
+            </div>
+
+            <div className="profile-menu">
+              <button onClick={() => setScreen("saved")}>
+                <span className="profile-menu-icon">♡</span>
+                <span>
+                  <strong>Saved posts</strong>
+                  <small>View your bookmarked posts</small>
+                </span>
+                <span className="profile-menu-arrow">→</span>
+              </button>
+
+              <button onClick={goHome}>
+                <span className="profile-menu-icon">⌂</span>
+                <span>
+                  <strong>Home</strong>
+                  <small>Return to the campus homepage</small>
+                </span>
+                <span className="profile-menu-arrow">→</span>
+              </button>
+            </div>
+
+            <button className="logout-button" onClick={handleLogout}>
+              ↗ Sign out of FutaHub
+            </button>
+          </section>
+        )}
+      </div>
+
+      <nav className="bottom-nav" aria-label="Main navigation">
+        <button
+          className={screen === "home" ? "nav-item active" : "nav-item"}
+          onClick={goHome}
+        >
+          <span className="nav-icon">⌂</span>
+          <span>Home</span>
+        </button>
+
+        <button
+          className={screen === "section" ? "nav-item active" : "nav-item"}
+          onClick={() => openSection("Student Marketplace")}
+        >
+          <span className="nav-icon">⌕</span>
+          <span>Explore</span>
+        </button>
+
+        <button
+          className="nav-item nav-post"
+          onClick={() => openPostForm()}
+        >
+          <span className="nav-post-icon">+</span>
+          <span>Post</span>
+        </button>
+
+        <button
+          className={screen === "saved" ? "nav-item active" : "nav-item"}
+          onClick={() => setScreen("saved")}
+        >
+          <span className="nav-icon">♡</span>
+          <span>Saved</span>
+        </button>
+
+        <button
+          className={screen === "profile" ? "nav-item active" : "nav-item"}
+          onClick={() => setScreen("profile")}
+        >
+          <span className="nav-icon">◉</span>
+          <span>Profile</span>
+        </button>
+      </nav>
+
+      {showPostForm && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setShowPostForm(false);
+              setPostMessage("");
+            }
+          }}
+        >
+          <section
+            className="post-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="post-modal-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <span className="section-kicker">SHARE WITH YOUR CAMPUS</span>
+                <h2 id="post-modal-title">Create a post</h2>
+                <p>Share something useful with fellow FUTA students.</p>
+              </div>
+
+              <button
+                className="modal-close"
+                onClick={() => {
+                  setShowPostForm(false);
+                  setPostMessage("");
+                }}
+                aria-label="Close form"
+              >
+                ×
+              </button>
+            </div>
+
+            <form className="post-form" onSubmit={publishPost}>
+              <label>
+                Category <span className="required">*</span>
+                <select
+                  value={postCategory}
+                  onChange={(event) =>
+                    setPostCategory(event.target.value as Section)
+                  }
+                >
+                  {SECTIONS.map((section) => (
+                    <option key={section.name} value={section.name}>
+                      {section.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Post title <span className="required">*</span>
+                <input
+                  value={postTitle}
+                  onChange={(event) => setPostTitle(event.target.value)}
+                  placeholder={
+                    postCategory === "Student Marketplace"
+                      ? "e.g. Textbook for sale"
+                      : postCategory === "Food & Snacks"
+                        ? "e.g. Freshly made snacks available"
+                        : postCategory === "Tutorials Available"
+                          ? "e.g. CSC 201 tutorial"
+                          : postCategory === "Lost & Found"
+                            ? "e.g. Lost student ID card"
+                            : "Give your post a clear title"
+                  }
+                  required
+                  maxLength={150}
+                />
+              </label>
+
+              <label>
+                Description
+                <textarea
+                  value={postContent}
+                  onChange={(event) => setPostContent(event.target.value)}
+                  placeholder="Add the important details..."
+                  rows={5}
+                />
+              </label>
+
+              {(postCategory === "Student Marketplace" ||
+                postCategory === "Food & Snacks" ||
+                postCategory === "Lost & Found" ||
+                postCategory === "Tutorials Available") && (
+                <label>
+                  Location
+                  <input
+                    value={postLocation}
+                    onChange={(event) => setPostLocation(event.target.value)}
+                    placeholder="e.g. North Gate, FUTA"
+                  />
+                </label>
+              )}
+
+              {(postCategory === "Student Marketplace" ||
+                postCategory === "Food & Snacks") && (
+                <label>
+                  Price (₦)
+                  <input
+                    value={postPrice}
+                    onChange={(event) => setPostPrice(event.target.value)}
+                    placeholder="e.g. 5000"
+                    inputMode="decimal"
+                  />
+                </label>
+              )}
+
+              {(postCategory === "Student Marketplace" ||
+                postCategory === "Lost & Found") && (
+                <label>
+                  WhatsApp number
+                  <input
+                    value={postWhatsapp}
+                    onChange={(event) => setPostWhatsapp(event.target.value)}
+                    placeholder="e.g. 08012345678"
+                    inputMode="tel"
+                  />
+                </label>
+              )}
+
+              {postCategory === "Tutorials Available" && (
+                <div className="form-note">
+                  You can include the course code, level, tutor, date and
+                  time in your description.
+                </div>
+              )}
+
+              {postMessage && (
+                <div className="message-box" role="status">
+                  {postMessage}
+                </div>
+              )}
+
+              <div className="form-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    setShowPostForm(false);
+                    setPostMessage("");
+                  }}
+                  disabled={posting}
+                >
+                  Cancel
+                </button>
+
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={posting}
+                >
+                  {posting ? "Publishing..." : "Publish post"}
+                  {!posting && <span>→</span>}
+                </button>
+              </div>
+            </form>
+          </section>
         </div>
       )}
+
+      <style jsx global>{styles}</style>
+    </main>
+  );
+}
+
+function PostList({
+  posts,
+  savedIds,
+  onSave,
+}: {
+  posts: Post[];
+  savedIds: (number | string)[];
+  onSave: (id: number | string) => void;
+}) {
+  return (
+    <div className="post-list">
+      {posts.map((post) => {
+        const section = normalizeCategory(post.category);
+        const isSaved = savedIds.includes(post.id);
+
+        return (
+          <article className="post-card" key={post.id}>
+            <div className="post-card-top">
+              <span
+                className="post-category"
+                style={{
+                  color: section ? CATEGORY_COLORS[section] : "#77aaff",
+                }}
+              >
+                {section ?? post.category}
+              </span>
+
+              <button
+                className={`save-button ${isSaved ? "saved" : ""}`}
+                onClick={() => onSave(post.id)}
+                aria-label={isSaved ? "Remove saved post" : "Save post"}
+                title={isSaved ? "Remove saved post" : "Save post"}
+              >
+                {isSaved ? "♥" : "♡"}
+              </button>
+            </div>
+
+            <h3>{post.title}</h3>
+
+            {post.content && <p className="post-content">{post.content}</p>}
+
+            <div className="post-meta">
+              {post.location && (
+                <span>
+                  <span className="meta-icon">⌖</span>
+                  {post.location}
+                </span>
+              )}
+
+              {post.price !== null &&
+                post.price !== undefined &&
+                String(post.price).trim() !== "" && (
+                  <span className="post-price">₦{String(post.price)}</span>
+                )}
+            </div>
+
+            <div className="post-card-footer">
+              <span>{formatDate(post.created_at)}</span>
+
+              {post.whatsapp && (
+                <a
+                  className="contact-button"
+                  href={`https://wa.me/${post.whatsapp.replace(/\D/g, "")}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Contact on WhatsApp ↗
+                </a>
+              )}
+            </div>
+          </article>
+        );
+      })}
     </div>
   );
 }
 
-function Thumb({ type, url, name }: { type: string; url: string; name: string }) {
-  if (type.startsWith("image/"))
-    // eslint-disable-next-line @next/next/no-img-element
-    return <img src={url} alt={name} className="h-24 w-full rounded-lg object-cover" />;
-  if (type.startsWith("video/"))
-    return <video src={url} className="h-24 w-full rounded-lg bg-black object-cover" muted />;
-  return <div className="flex h-24 items-center justify-center rounded-lg bg-slate-100 p-1 text-center text-[11px] break-all">📄 {name}</div>;
+const styles = `
+:root {
+  --bg: #070b14;
+  --panel: #0e1523;
+  --panel-light: #111c2e;
+  --border: rgba(153, 178, 220, .13);
+  --text: #f4f7ff;
+  --muted: #8f9bb2;
+  --blue: #438cff;
+  --blue-bright: #4b91ff;
+  --radius: 20px;
 }
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--bg);
+  scroll-behavior: auto;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea, select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: .65;
+  cursor: not-allowed;
+}
+
+button:focus-visible, input:focus-visible,
+textarea:focus-visible, select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.loading-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.loading-logo, .brand-mark {
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  background: linear-gradient(140deg, #5da2ff, #1761e8);
+  color: white;
+  border-radius: 13px;
+  box-shadow: 0 8px 26px rgba(38, 115, 255, .25);
+}
+
+.loading-logo {
+  width: 55px;
+  height: 55px;
+  font-size: 29px;
+}
+
+.loading-screen h2 {
+  margin: 17px 0 5px;
+}
+
+.loading-screen p {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.loading-bar {
+  width: 150px;
+  height: 3px;
+  border-radius: 10px;
+  background: #172239;
+  overflow: hidden;
+  margin-top: 18px;
+}
+
+.loading-bar span {
+  display: block;
+  width: 45%;
+  height: 100%;
+  background: var(--blue);
+  animation: loading 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes loading {
+  from { transform: translateX(-30%); }
+  to { transform: translateX(150%); }
+}
+
+/* LOGIN AND SIGN-UP */
+
+.auth-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: auto;
+  display: grid;
+  place-items: center;
+  padding: 24px 17px;
+  background:
+    radial-gradient(ellipse at 18% 15%, rgba(24, 84, 180, .16), transparent 42%),
+    radial-gradient(ellipse at 95% 90%, rgba(29, 83, 177, .12), transparent 38%),
+    #070b14;
+}
+
+.auth-glow {
+  position: absolute;
+  width: 350px;
+  height: 350px;
+  border-radius: 50%;
+  filter: blur(110px);
+  pointer-events: none;
+  opacity: .13;
+  background: #287aff;
+}
+
+.auth-glow-one {
+  top: -180px;
+  left: 12%;
+}
+
+.auth-glow-two {
+  right: -180px;
+  bottom: -180px;
+}
+
+.auth-layout {
+  width: 100%;
+  max-width: 430px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+  margin: auto;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: white;
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -.8px;
+}
+
+.brand-mark {
+  width: 39px;
+  height: 39px;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.brand-blue {
+  color: #62a1ff;
+}
+
+.brand-button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.auth-card {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: rgba(14, 21, 35, .92);
+  padding: 35px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .22);
+}
+
+.auth-card-heading {
+  margin-bottom: 27px;
+}
+
+.auth-mini-icon {
+  display: grid;
+  place-items: center;
+  width: 41px;
+  height: 41px;
+  border-radius: 12px;
+  color: #7bb0ff;
+  background: rgba(67, 140, 255, .13);
+  border: 1px solid rgba(67, 140, 255, .17);
+  font-size: 23px;
+  margin-bottom: 22px;
+}
+
+.auth-card-heading h2 {
+  font-size: 26px;
+  letter-spacing: -.7px;
+  margin: 0 0 9px;
+}
+
+.auth-card-heading p {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+.auth-form, .post-form {
+  display: grid;
+  gap: 19px;
+}
+
+.auth-form label, .post-form label {
+  display: grid;
+  gap: 9px;
+  color: #dce5f6;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.auth-form input, .post-form input,
+.post-form textarea, .post-form select {
+  width: 100%;
+  border: 1px solid #26344a;
+  border-radius: 10px;
+  padding: 13px 14px;
+  color: white;
+  background: #0a111e;
+  outline: none;
+  font-size: 13px;
+  transition: border-color .2s, box-shadow .2s;
+}
+
+.auth-form input:focus, .post-form input:focus,
+.post-form textarea:focus, .post-form select:focus {
+  border-color: #438cff;
+  box-shadow: 0 0 0 3px rgba(67, 140, 255, .09);
+}
+
+.auth-form input::placeholder, .post-form input::placeholder,
+.post-form textarea::placeholder {
+  color: #65738b;
+}
+
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  border: 1px solid #438cff;
+  border-radius: 10px;
+  padding: 12px 17px;
+  background: linear-gradient(135deg, #438cff, #246be0);
+  color: white;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 7px 20px rgba(44, 112, 235, .15);
+  transition: transform .2s, filter .2s;
+}
+
+.primary-button:hover:not(:disabled) {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+}
+
+.primary-button span {
+  font-size: 16px;
+}
+
+.auth-submit {
+  width: 100%;
+  min-height: 47px;
+  margin-top: 3px;
+}
+
+.auth-switch {
+  border-top: 1px solid var(--border);
+  margin-top: 24px;
+  padding-top: 22px;
+  text-align: center;
+  color: #9ba8be;
+  font-size: 12px;
+}
+
+.auth-switch button {
+  border: 0;
+  background: transparent;
+  color: #75aaff;
+  font-size: 12px;
+  font-weight: 800;
+  margin-left: 6px;
+}
+
+.auth-security {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  color: #687892;
+  font-size: 10px;
+  margin: 25px 0 0;
+}
+
+.auth-security span {
+  color: #49d7a1;
+  font-size: 8px;
+}
+
+.mobile-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 26px;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.message-box {
+  padding: 12px 13px;
+  border: 1px solid rgba(255, 175, 80, .23);
+  border-radius: 9px;
+  color: #ffce8a;
+  background: rgba(255, 175, 80, .07);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* APP LAYOUT */
+
+.app-shell {
+  min-height: 100vh;
+  position: relative;
+  overflow-x: clip;
+  padding-bottom: 112px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(30, 75, 150, .07), transparent 40%),
+    var(--bg);
+}
+
+.ambient-glow {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 700px;
+  height: 300px;
+  pointer-events: none;
+  background: rgba(25, 78, 173, .07);
+  filter: blur(100px);
+}
+
+.topbar {
+  height: 76px;
+  padding: 0 max(28px, calc((100% - 1120px) / 2));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  position: relative;
+  z-index: 5;
+  border-bottom: 1px solid rgba(153, 178, 220, .08);
+  background: rgba(7, 11, 20, .8);
+}
+
+.topbar-campus {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #8290a9;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  font-weight: 800;
+}
+
+.campus-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  background: #49d7a1;
+  box-shadow: 0 0 12px rgba(73, 215, 161, .5);
+  flex-shrink: 0;
+}
+
+.avatar-button {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid rgba(93, 153, 255, .32);
+  background: rgba(67, 140, 255, .12);
+  color: #8fbcff;
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.app-content {
+  position: relative;
+  z-index: 1;
+  max-width: 1120px;
+  width: calc(100% - 56px);
+  margin: 0 auto;
+}
+
+.hero-panel {
+  min-height: 310px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  margin-top: 34px;
+  padding: 42px 45px;
+  border: 1px solid rgba(99, 146, 220, .18);
+  border-radius: 24px;
+  background:
+    radial-gradient(ellipse at 84% 48%, rgba(42, 111, 232, .18), transparent 42%),
+    linear-gradient(115deg, #101a2b, #0b1220 70%);
+}
+
+.hero-copy {
+  position: relative;
+  z-index: 2;
+  max-width: 630px;
+}
+
+.hero-copy h1 {
+  font-size: clamp(30px, 4vw, 44px);
+  letter-spacing: -2px;
+  line-height: 1.15;
+  margin: 19px 0 13px;
+}
+
+.hero-copy h1 span {
+  color: #69a4ff;
+}
+
+.hero-copy > p {
+  color: #9ba9c0;
+  font-size: 13px;
+  line-height: 1.8;
+  max-width: 470px;
+  margin: 0 0 23px;
+}
+
+.hero-button {
+  padding: 12px 17px;
+}
+
+.hero-art {
+  position: absolute;
+  width: 330px;
+  height: 290px;
+  right: 25px;
+  top: 12px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.orbit {
+  position: absolute;
+  border: 1px solid rgba(91, 148, 255, .19);
+  border-radius: 50%;
+  transform: rotate(-25deg);
+}
+
+.orbit-one {
+  width: 255px;
+  height: 175px;
+}
+
+.orbit-two {
+  width: 315px;
+  height: 220px;
+  transform: rotate(42deg);
+}
+
+.hero-symbol {
+  display: grid;
+  place-items: center;
+  width: 125px;
+  height: 125px;
+  border: 1px solid rgba(125, 179, 255, .5);
+  border-radius: 32px;
+  background: linear-gradient(145deg, rgba(60, 135, 255, .36), rgba(13, 29, 58, .8));
+  box-shadow: 0 0 75px rgba(42, 111, 232, .23);
+  color: #e1edff;
+  font-size: 80px;
+  font-weight: 900;
+  transform: rotate(-7deg);
+}
+
+.floating-card {
+  position: absolute;
+  border: 1px solid rgba(129, 165, 223, .2);
+  border-radius: 9px;
+  background: rgba(14, 26, 45, .92);
+  padding: 11px 13px;
+  color: #dbe7fb;
+  font-size: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .2);
+}
+
+.floating-card span {
+  color: #67a5ff;
+  margin-right: 5px;
+}
+
+.floating-card-top {
+  top: 42px;
+  right: 15px;
+}
+
+.floating-card-bottom {
+  bottom: 35px;
+  left: 8px;
+}
+
+.hero-index {
+  position: absolute;
+  right: 25px;
+  bottom: 18px;
+  color: #657895;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  font-weight: 800;
+}
+
+.section-heading, .recent-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 43px;
+  margin-bottom: 19px;
+}
+
+.section-heading h2, .recent-heading h2 {
+  font-size: 24px;
+  letter-spacing: -.8px;
+  margin: 8px 0 5px;
+}
+
+.section-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.section-count {
+  color: #8292ae;
+  font-size: 9px;
+  letter-spacing: 1.3px;
+  padding-bottom: 6px;
+}
+
+.category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px;
+}
+
+.category-card {
+  position: relative;
+  min-width: 0;
+  min-height: 190px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: left;
+  overflow: hidden;
+  padding: 21px;
+  border: 1px solid var(--border);
+  border-radius: 17px;
+  color: white;
+  background:
+    radial-gradient(ellipse at 100% 0%, rgba(65, 115, 200, .09), transparent 48%),
+    #0d1421;
+  transition: border-color .2s, transform .2s, background .2s;
+}
+
+.category-card:hover {
+  border-color: rgba(90, 153, 255, .55);
+  transform: translateY(-3px);
+  background:
+    radial-gradient(ellipse at 100% 0%, rgba(65, 115, 200, .16), transparent 48%),
+    #101a2a;
+}
+
+.category-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.category-icon {
+  display: grid;
+  place-items: center;
+  width: 43px;
+  height: 43px;
+  border: 1px solid rgba(130, 159, 205, .15);
+  border-radius: 13px;
+  background: rgba(88, 124, 185, .09);
+  font-size: 21px;
+}
+
+.category-arrow {
+  color: #667993;
+  font-size: 21px;
+  transition: transform .2s, color .2s;
+}
+
+.category-card:hover .category-arrow {
+  color: #77adff;
+  transform: translate(2px, -2px);
+}
+
+.category-card-copy {
+  margin-top: 22px;
+  margin-bottom: 22px;
+}
+
+.category-card-copy h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+  letter-spacing: -.35px;
+}
+
+.category-card-copy p {
+  margin: 0;
+  max-width: 350px;
+  color: #8f9db3;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.category-card-bottom {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-top: auto;
+  color: #7184a2;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+.category-line {
+  width: 32px;
+  height: 1px;
+  background: #3b75c7;
+  transition: width .2s;
+}
+
+.category-card:hover .category-line {
+  width: 52px;
+}
+
+.category-wide {
+  grid-column: 1 / -1;
+  min-height: 145px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-rows: auto 1fr;
+}
+
+.category-wide .category-card-top {
+  grid-column: 1 / -1;
+}
+
+.category-wide .category-card-copy {
+  margin-top: 15px;
+  margin-bottom: 0;
+}
+
+.category-wide .category-card-bottom {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+  margin-top: 0;
+}
+
+.recent-heading {
+  margin-top: 47px;
+}
+
+.recent-heading h2 {
+  margin-bottom: 0;
+}
+
+.text-button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: #80b2ff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+/* CATEGORY FEEDS */
+
+.section-page {
+  padding-top: 30px;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border: 0;
+  color: #a4b3ca;
+  background: transparent;
+  font-size: 12px;
+}
+
+.back-button span {
+  font-size: 18px;
+  color: #76aaff;
+}
+
+.section-hero {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-height: 180px;
+  padding: 27px;
+  margin-top: 21px;
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--blue);
+  border-radius: 18px;
+  background:
+    radial-gradient(ellipse at 100% 0%, rgba(48, 109, 217, .13), transparent 55%),
+    #0e1523;
+}
+
+.section-hero-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  border-radius: 18px;
+  border: 1px solid rgba(120, 154, 212, .2);
+  background: rgba(66, 107, 176, .1);
+  font-size: 29px;
+}
+
+.section-hero-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.section-hero-copy h1 {
+  margin: 10px 0 8px;
+  font-size: clamp(25px, 3vw, 34px);
+  letter-spacing: -1.2px;
+}
+
+.section-hero-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.section-post-button {
+  white-space: nowrap;
+}
+
+.feed-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 15px;
+  margin: 35px 0 19px;
+}
+
+.feed-toolbar h2 {
+  font-size: 19px;
+  letter-spacing: -.4px;
+  margin: 0 0 7px;
+}
+
+.feed-toolbar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.feed-count {
+  color: #8ea1be;
+  font-size: 9px;
+  letter-spacing: 1px;
+  white-space: nowrap;
+}
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 47px;
+  padding: 0 14px;
+  margin-bottom: 19px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: #0c1320;
+}
+
+.search-box > span {
+  color: #7caeff;
+  font-size: 25px;
+}
+
+.search-box input {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: white;
+  background: transparent;
+  font-size: 12px;
+}
+
+.search-box input::placeholder {
+  color: #6d7c94;
+}
+
+.search-box button {
+  border: 0;
+  background: transparent;
+  color: #aebbd0;
+  font-size: 22px;
+}
+
+/* POSTS */
+
+.post-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.post-card {
+  min-width: 0;
+  padding: 19px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: linear-gradient(145deg, #101827, #0c1320);
+}
+
+.post-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.post-category {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.save-button {
+  width: 33px;
+  height: 33px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #111c2d;
+  color: #91a4c3;
+  font-size: 19px;
+}
+
+.save-button.saved {
+  color: #75aaff;
+  border-color: rgba(67, 140, 255, .4);
+}
+
+.post-card h3 {
+  margin: 14px 0 9px;
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.post-content {
+  color: #9aa8bd;
+  font-size: 12px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.post-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  color: #9eacc1;
+  font-size: 11px;
+}
+
+.post-meta > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.meta-icon {
+  color: #78aaff;
+  font-size: 15px;
+}
+
+.post-price {
+  color: #66d8ac;
+  font-weight: 800;
+}
+
+.post-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 15px;
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  color: #74839b;
+  font-size: 10px;
+}
+
+.contact-button {
+  color: #6de0b2;
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.contact-button:hover {
+  text-decoration: underline;
+}
+
+.empty-panel, .notice-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 220px;
+  padding: 32px 20px;
+  border: 1px dashed rgba(128, 156, 203, .22);
+  border-radius: 17px;
+  background: rgba(13, 20, 33, .6);
+}
+
+.empty-icon {
+  font-size: 29px;
+  color: #6ba5ff;
+  margin-bottom: 12px;
+}
+
+.empty-panel h3 {
+  margin: 0 0 9px;
+  font-size: 17px;
+}
+
+.empty-panel p {
+  max-width: 380px;
+  color: #91a0b7;
+  font-size: 12px;
+  line-height: 1.8;
+  margin: 0 0 19px;
+}
+
+.empty-panel > .primary-button {
+  margin-top: 5px;
+}
+
+.notice-panel {
+  min-height: auto;
+  color: #ffcc8b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.spinner {
+  width: 25px;
+  height: 25px;
+  border: 2px solid #23334d;
+  border-top-color: #5b9bff;
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+  margin-bottom: 13px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* PROFILE */
+
+.simple-page-heading {
+  margin: 12px 0 27px;
+}
+
+.simple-page-heading h1 {
+  margin: 12px 0 8px;
+  font-size: 34px;
+  letter-spacing: -1.2px;
+}
+
+.simple-page-heading p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 19px;
+  padding: 25px;
+  border: 1px solid var(--border);
+  border-radius: 17px;
+  background: #0e1523;
+}
+
+.profile-avatar {
+  width: 65px;
+  height: 65px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  color: white;
+  background: linear-gradient(145deg, #448dff, #194ca6);
+  font-size: 28px;
+  font-weight: 800;
+}
+
+.profile-details h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+}
+
+.profile-details p {
+  margin: 0 0 12px;
+  color: #94a4bc;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.profile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #78dcb4;
+  font-size: 10px;
+}
+
+.profile-badge .live-dot {
+  width: 6px;
+  height: 6px;
+}
+
+.profile-menu {
+  margin-top: 18px;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  overflow: hidden;
+  background: #0e1523;
+}
+
+.profile-menu button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+  padding: 18px;
+  color: white;
+  border: 0;
+  background: transparent;
+}
+
+.profile-menu button + button {
+  border-top: 1px solid var(--border);
+}
+
+.profile-menu-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: #14233a;
+  color: #7daeff;
+  font-size: 21px;
+}
+
+.profile-menu button > span:nth-child(2) {
+  flex: 1;
+  display: grid;
+  gap: 5px;
+}
+
+.profile-menu strong {
+  font-size: 12px;
+}
+
+.profile-menu small {
+  color: #8f9eb4;
+  font-size: 11px;
+}
+
+.profile-menu-arrow {
+  color: #7baaff;
+}
+
+.logout-button {
+  margin-top: 22px;
+  padding: 13px 17px;
+  border: 1px solid rgba(255, 108, 108, .25);
+  border-radius: 10px;
+  background: rgba(255, 91, 91, .07);
+  color: #ff9c9c;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* FIXED BOTTOM NAVIGATION */
+
+.bottom-nav {
+  position: fixed;
+  z-index: 20;
+  bottom: 15px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(530px, calc(100% - 32px));
+  min-height: 69px;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  gap: 4px;
+  padding: 7px 10px;
+  border: 1px solid rgba(135, 166, 219, .19);
+  border-radius: 19px;
+  background: rgba(12, 19, 32, .94);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+}
+
+.nav-item {
+  flex: 1;
+  min-width: 0;
+  min-height: 51px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 12px;
+  color: #8795ad;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.nav-item.active {
+  color: #78adff;
+  background: rgba(63, 126, 226, .1);
+}
+
+.nav-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.nav-post {
+  color: #eaf2ff;
+}
+
+.nav-post-icon {
+  display: grid;
+  place-items: center;
+  width: 29px;
+  height: 29px;
+  border-radius: 9px;
+  color: white;
+  background: linear-gradient(145deg, #5ba0ff, #286be1);
+  font-size: 23px;
+  line-height: 1;
+  box-shadow: 0 4px 12px rgba(55, 123, 244, .25);
+}
+
+/* POST MODAL */
+
+.modal-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 5, 11, .79);
+  backdrop-filter: blur(7px);
+}
+
+.post-modal {
+  width: min(570px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow-y: auto;
+  border: 1px solid rgba(128, 164, 223, .2);
+  border-radius: 20px;
+  background: #0e1523;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, .45);
+  padding: 27px;
+}
+
+.modal-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 20px;
+  padding-bottom: 23px;
+  margin-bottom: 22px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-heading h2 {
+  margin: 10px 0 7px;
+  font-size: 25px;
+  letter-spacing: -.8px;
+}
+
+.modal-heading p {
+  margin: 0;
+  color: #8f9db3;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.modal-close {
+  width: 35px;
+  height: 35px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: #c1cde0;
+  background: #141e30;
+  font-size: 23px;
+}
+
+.post-form {
+  gap: 17px;
+}
+
+.post-form textarea {
+  resize: vertical;
+  min-height: 100px;
+  line-height: 1.7;
+}
+
+.post-form select {
+  appearance: auto;
+}
+
+.required {
+  color: #77adff;
+}
+
+.form-note {
+  padding: 12px;
+  border: 1px solid rgba(87, 147, 255, .18);
+  border-radius: 9px;
+  color: #9db9e8;
+  background: rgba(67, 140, 255, .06);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.secondary-button {
+  border: 1px solid #29374e;
+  border-radius: 10px;
+  padding: 12px 18px;
+  color: #aab8cd;
+  background: #111b2b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* RESPONSIVE */
+
+@media (min-width: 1300px) {
+  .app-content {
+    width: calc(100% - 80px);
+  }
+}
+
+@media (max-width: 850px) {
+  .hero-art {
+    right: -65px;
+    opacity: .7;
+  }
+
+  .hero-copy {
+    max-width: 75%;
+  }
+
+  .section-hero {
+    flex-wrap: wrap;
+  }
+
+  .section-hero-copy {
+    flex-basis: calc(100% - 90px);
+  }
+
+  .section-post-button {
+    margin-left: 84px;
+  }
+}
+
+@media (max-width: 650px) {
+  .auth-page {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: 22px 17px;
+    display: grid;
+    place-items: center;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .auth-layout {
+    display: flex;
+    width: 100%;
+    max-width: 430px;
+    justify-content: center;
+    align-items: center;
+    margin: auto;
+  }
+
+  .mobile-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 26px;
+    font-size: 22px;
+    font-weight: 800;
+  }
+
+  .auth-card {
+    width: 100%;
+    min-width: 0;
+    padding: 25px 21px;
+    border-radius: 20px;
+  }
+
+  .auth-card-heading h2 {
+    font-size: 24px;
+  }
+
+  .topbar {
+    height: 64px;
+    padding: 0 17px;
+  }
+
+  .topbar .brand-lockup {
+    font-size: 20px;
+  }
+
+  .topbar .brand-mark {
+    width: 34px;
+    height: 34px;
+    font-size: 19px;
+  }
+
+  .topbar-campus {
+    display: none;
+  }
+
+  .avatar-button {
+    width: 35px;
+    height: 35px;
+  }
+
+  .app-shell {
+    padding-bottom: 105px;
+  }
+
+  .app-content {
+    width: calc(100% - 30px);
+  }
+
+  .hero-panel {
+    min-height: 285px;
+    margin-top: 19px;
+    padding: 27px 21px;
+    border-radius: 18px;
+  }
+
+  .hero-copy {
+    max-width: 100%;
+  }
+
+  .hero-copy h1 {
+    font-size: 30px;
+    letter-spacing: -1.5px;
+    line-height: 1.18;
+  }
+
+  .hero-copy > p {
+    max-width: 90%;
+    font-size: 12px;
+  }
+
+  .hero-art {
+    width: 155px;
+    height: 155px;
+    top: auto;
+    bottom: 5px;
+    right: -44px;
+    opacity: .18;
+  }
+
+  .hero-symbol {
+    width: 80px;
+    height: 80px;
+    border-radius: 23px;
+    font-size: 49px;
+  }
+
+  .orbit-one {
+    width: 150px;
+    height: 100px;
+  }
+
+  .orbit-two {
+    width: 175px;
+    height: 130px;
+  }
+
+  .floating-card {
+    display: none;
+  }
+
+  .hero-index {
+    display: none;
+  }
+
+  .section-heading, .recent-heading {
+    margin-top: 33px;
+    margin-bottom: 17px;
+  }
+
+  .section-heading h2, .recent-heading h2 {
+    font-size: 21px;
+  }
+
+  .section-heading p {
+    font-size: 11px;
+    line-height: 1.6;
+  }
+
+  .section-count {
+    font-size: 8px;
+    white-space: nowrap;
+  }
+
+  .category-grid {
+    gap: 10px;
+  }
+
+  .category-card {
+    min-height: 183px;
+    padding: 14px;
+    border-radius: 14px;
+  }
+
+  .category-icon {
+    width: 37px;
+    height: 37px;
+    font-size: 18px;
+    border-radius: 11px;
+  }
+
+  .category-arrow {
+    font-size: 18px;
+  }
+
+  .category-card-copy {
+    margin-top: 19px;
+    margin-bottom: 18px;
+  }
+
+  .category-card-copy h3 {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .category-card-copy p {
+    font-size: 10px;
+    line-height: 1.6;
+  }
+
+  .category-card-bottom {
+    font-size: 7px;
+    letter-spacing: 1px;
+    gap: 7px;
+  }
+
+  .category-line {
+    width: 18px;
+  }
+
+  .category-wide {
+    min-height: 125px;
+  }
+
+  .category-wide .category-card-copy {
+    margin-top: 13px;
+  }
+
+  .recent-heading {
+    align-items: center;
+    gap: 10px;
+  }
+
+  .text-button {
+    max-width: 120px;
+    text-align: right;
+    justify-content: end;
+    font-size: 10px;
+  }
+
+  .post-list {
+    grid-template-columns: 1fr;
+    gap: 11px;
+  }
+
+  .post-card {
+    padding: 16px;
+  }
+
+  .section-page {
+    padding-top: 17px;
+  }
+
+  .section-hero {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    gap: 13px;
+    padding: 19px 15px;
+    margin-top: 13px;
+    border-radius: 15px;
+  }
+
+  .section-hero-icon {
+    width: 47px;
+    height: 47px;
+    border-radius: 12px;
+    font-size: 23px;
+  }
+
+  .section-hero-copy {
+    flex: initial;
+    min-width: 0;
+  }
+
+  .section-hero-copy .section-kicker {
+    font-size: 8px;
+    letter-spacing: 1px;
+  }
+
+  .section-hero-copy h1 {
+    margin: 8px 0 6px;
+    font-size: 23px;
+    letter-spacing: -.8px;
+    overflow-wrap: anywhere;
+  }
+
+  .section-hero-copy p {
+    font-size: 11px;
+  }
+
+  .section-post-button {
+    grid-column: 1 / -1;
+    margin: 5px 0 0;
+    width: 100%;
+  }
+
+  .feed-toolbar {
+    margin-top: 27px;
+  }
+
+  .feed-toolbar h2 {
+    font-size: 17px;
+  }
+
+  .feed-toolbar p {
+    font-size: 10px;
+    line-height: 1.6;
+  }
+
+  .feed-count {
+    font-size: 8px;
+  }
+
+  .search-box {
+    min-height: 44px;
+  }
+
+  .bottom-nav {
+    bottom: max(8px, env(safe-area-inset-bottom));
+    width: calc(100% - 20px);
+    min-height: 65px;
+    padding: 6px 5px;
+    border-radius: 17px;
+  }
+
+  .nav-item {
+    min-height: 49px;
+    font-size: 8px;
+    gap: 4px;
+  }
+
+  .nav-icon {
+    font-size: 20px;
+  }
+
+  .nav-post-icon {
+    width: 27px;
+    height: 27px;
+    font-size: 21px;
+  }
+
+  .post-modal {
+    padding: 20px 16px;
+    border-radius: 16px;
+  }
+
+  .modal-heading h2 {
+    font-size: 22px;
+  }
+
+  .modal-heading p {
+    font-size: 11px;
+  }
+
+  .profile-card {
+    padding: 18px;
+    gap: 13px;
+  }
+
+  .profile-avatar {
+    width: 53px;
+    height: 53px;
+    border-radius: 15px;
+  }
+
+  .profile-details h2 {
+    font-size: 15px;
+  }
+
+  .profile-details p {
+    font-size: 11px;
+  }
+
+  .simple-page-heading h1 {
+    font-size: 29px;
+  }
+}
+
+@media (max-width: 360px) {
+  .app-content {
+    width: calc(100% - 22px);
+  }
+
+  .auth-card {
+    padding: 23px 17px;
+  }
+
+  .hero-panel {
+    padding: 22px 15px;
+  }
+
+  .hero-copy h1 {
+    font-size: 26px;
+  }
+
+  .category-card {
+    padding: 11px;
+  }
+
+  .category-card-copy h3 {
+    font-size: 12px;
+  }
+
+  .category-card-copy p {
+    font-size: 9px;
+  }
+
+  .category-card-bottom {
+    letter-spacing: .5px;
+  }
+
+  .section-heading h2, .recent-heading h2 {
+    font-size: 19px;
+  }
+
+  .section-count {
+    font-size: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+`;
