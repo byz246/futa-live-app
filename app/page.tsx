@@ -641,7 +641,7 @@ export default function HomePage() {
 
             <section className="recent-heading">
               <div>
-                <span className="section-kicker">WHAT'S HAPPENING</span>
+                <span className="section-kicker">WHAT&apos;S HAPPENING</span>
                 <h2>Latest from campus</h2>
               </div>
 
@@ -796,7 +796,7 @@ export default function HomePage() {
             <div className="simple-page-heading">
               <span className="section-kicker">YOUR COLLECTION</span>
               <h1>Saved posts</h1>
-              <p>Posts you've bookmarked for later.</p>
+              <p>Posts you&apos;ve bookmarked for later.</p>
             </div>
 
             {visiblePosts.length === 0 ? (
