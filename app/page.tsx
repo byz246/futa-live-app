@@ -1,8 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import AuthScreen from "./components/AuthScreen";
+import PostMenu from "./components/PostMenu";
+import MarketplaceFeed from "./components/MarketplaceFeed";
+import FoodFeed from "./components/FoodFeed";
+import TutorialsFeed from "./components/TutorialsFeed";
+import LostFoundFeed from "./components/LostFoundFeed";
+import AnnouncementsFeed from "./components/AnnouncementsFeed";
 
 type Section =
   | "Announcements"
@@ -10,18 +17,6 @@ type Section =
   | "Food & Snacks"
   | "Tutorials Available"
   | "Lost & Found";
-
-type Post = {
-  id: number | string;
-  created_at?: string;
-  title: string;
-  content?: string | null;
-  category: string;
-  user_id?: string;
-  location?: string | null;
-  price?: string | number | null;
-  whatsapp?: string | null;
-};
 
 type Screen = "home" | "section" | "saved" | "profile";
 
@@ -63,91 +58,27 @@ const SECTIONS: {
   },
 ];
 
-const CATEGORY_COLORS: Record<Section, string> = {
-  Announcements: "#438cff",
-  "Student Marketplace": "#36c7f4",
-  "Food & Snacks": "#f4b942",
-  "Tutorials Available": "#9b8cff",
-  "Lost & Found": "#39d6b0",
-};
-
-function normalizeCategory(value: string): Section | null {
-  const category = value.toLowerCase().trim();
-
-  if (category.includes("announcement")) return "Announcements";
-
-  if (
-    category.includes("market") ||
-    category.includes("sale") ||
-    category.includes("product")
-  ) {
-    return "Student Marketplace";
-  }
-
-  if (category.includes("food") || category.includes("snack")) {
-    return "Food & Snacks";
-  }
-
-  if (category.includes("tutorial") || category.includes("tutor")) {
-    return "Tutorials Available";
-  }
-
-  if (category.includes("lost") || category.includes("found")) {
-    return "Lost & Found";
-  }
-
-  return null;
-}
-
-function formatDate(date?: string) {
-  if (!date) return "Recently posted";
-
-  const parsed = new Date(date);
-
-  if (Number.isNaN(parsed.getTime())) return "Recently posted";
-
-  return parsed.toLocaleDateString("en-NG", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
+// One electric-blue accent for every section, as in the FutaHub design.
+const ACCENT = "#72aaff";
 
 export default function HomePage() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [fullName, setFullName] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authMessage, setAuthMessage] = useState("");
+  const [recovering, setRecovering] = useState(false);
 
   const [screen, setScreen] = useState<Screen>("home");
   const [activeSection, setActiveSection] = useState<Section | null>(null);
 
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [postsLoading, setPostsLoading] = useState(false);
-  const [postsError, setPostsError] = useState("");
-  const [search, setSearch] = useState("");
+  const [showPostMenu, setShowPostMenu] = useState(false);
+  const [startWithForm, setStartWithForm] = useState(false);
+  const [postRequestId, setPostRequestId] = useState(0);
+  const [accountMessage, setAccountMessage] = useState("");
 
-  const [showPostForm, setShowPostForm] = useState(false);
-  const [posting, setPosting] = useState(false);
-  const [postMessage, setPostMessage] = useState("");
-
-  const [postTitle, setPostTitle] = useState("");
-  const [postContent, setPostContent] = useState("");
-  const [postCategory, setPostCategory] =
-    useState<Section>("Announcements");
-  const [postLocation, setPostLocation] = useState("");
-  const [postPrice, setPostPrice] = useState("");
-  const [postWhatsapp, setPostWhatsapp] = useState("");
-
-  const [savedIds, setSavedIds] = useState<(number | string)[]>([]);
-
-  // Restore the existing Supabase login session.
+  // Restore the Supabase login session and detect a password-reset link.
   useEffect(() => {
     let mounted = true;
+
+    if (window.location.hash.includes("type=recovery")) setRecovering(true);
 
     async function loadSession() {
       const { data } = await supabase.auth.getSession();
@@ -162,7 +93,8 @@ export default function HomePage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "PASSWORD_RECOVERY") setRecovering(true);
       setUser(session?.user ?? null);
       setAuthLoading(false);
     });
@@ -173,107 +105,28 @@ export default function HomePage() {
     };
   }, []);
 
-  const loadPosts = useCallback(async () => {
-    setPostsLoading(true);
-    setPostsError("");
-
-    const { data, error } = await supabase
-      .from("posts")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setPostsError(
-        "We couldn't load the posts. Please check your connection and try again."
-      );
-      setPostsLoading(false);
-      return;
-    }
-
-    setPosts((data ?? []) as Post[]);
-    setPostsLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (user) {
-      void loadPosts();
-    } else {
-      setPosts([]);
-    }
-  }, [user, loadPosts]);
-
-  // Open a category immediately. Do not scroll the user down the homepage.
+  // Open a category immediately.
   function openSection(section: Section) {
+    setStartWithForm(false);
     setActiveSection(section);
     setScreen("section");
-    setSearch("");
-    setShowPostForm(false);
-    setPostMessage("");
   }
 
   function goHome() {
     setScreen("home");
     setActiveSection(null);
-    setShowPostForm(false);
-    setSearch("");
   }
 
-  function openPostForm(section?: Section) {
-    setPostCategory(section ?? activeSection ?? "Announcements");
-    setPostTitle("");
-    setPostContent("");
-    setPostLocation("");
-    setPostPrice("");
-    setPostWhatsapp("");
-    setPostMessage("");
-    setShowPostForm(true);
-  }
-
-  async function handleAuth(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAuthBusy(true);
-    setAuthMessage("");
-
-    try {
-      if (authMode === "signup") {
-        const { data, error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-          options: {
-            data: {
-              full_name: fullName.trim(),
-            },
-          },
-        });
-
-        if (error) throw error;
-
-        if (data.session) {
-          setUser(data.session.user);
-        } else {
-          setAuthMessage(
-            "Account created. Check your email to confirm your account, then sign in."
-          );
-        }
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-
-        if (error) throw error;
-
-        setUser(data.user);
-        setAuthMessage("");
-      }
-    } catch (error) {
-      setAuthMessage(
-        error instanceof Error
-          ? error.message
-          : "Something went wrong. Please try again."
-      );
-    } finally {
-      setAuthBusy(false);
+  // The bottom Post sheet: open the chosen section, directly on its form.
+  function startPost(section: Section) {
+    setShowPostMenu(false);
+    // Students cannot post announcements.
+    if (section === "Announcements") return;
+    openSection(section);
+    // Lost & Found opens its own Lost / Found buttons instead.
+    if (section !== "Lost & Found") {
+      setStartWithForm(true);
+      setPostRequestId((id) => id + 1);
     }
   }
 
@@ -281,102 +134,19 @@ export default function HomePage() {
     const { error } = await supabase.auth.signOut();
 
     if (error) {
-      setPostsError("Unable to sign out. Please try again.");
+      setAccountMessage("Unable to sign out. Please try again.");
       return;
     }
 
     setUser(null);
+    setRecovering(false);
     setScreen("home");
     setActiveSection(null);
-    setShowPostForm(false);
+    setShowPostMenu(false);
+    setAccountMessage("");
   }
 
-  async function publishPost(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!user) {
-      setPostMessage("Please sign in before publishing a post.");
-      return;
-    }
-
-    if (!postTitle.trim()) {
-      setPostMessage("Please enter a title for your post.");
-      return;
-    }
-
-    setPosting(true);
-    setPostMessage("");
-
-    const payload: Record<string, unknown> = {
-      title: postTitle.trim(),
-      content: postContent.trim(),
-      category: postCategory,
-      user_id: user.id,
-    };
-
-    // Keep optional fields empty when the student leaves them blank.
-    if (postLocation.trim()) {
-      payload.location = postLocation.trim();
-    }
-
-    if (postPrice.trim()) {
-      payload.price = postPrice.trim();
-    }
-
-    if (postWhatsapp.trim()) {
-      payload.whatsapp = postWhatsapp.trim();
-    }
-
-    const { error } = await supabase.from("posts").insert(payload);
-
-    if (error) {
-      setPostMessage(
-        `Could not publish your post: ${error.message}. Check that your Supabase posts table has the required columns.`
-      );
-      setPosting(false);
-      return;
-    }
-
-    setPosting(false);
-    setShowPostForm(false);
-    setPostTitle("");
-    setPostContent("");
-    setPostLocation("");
-    setPostPrice("");
-    setPostWhatsapp("");
-
-    await loadPosts();
-    setScreen("section");
-    setActiveSection(postCategory);
-  }
-
-  function toggleSaved(id: number | string) {
-    setSavedIds((current) =>
-      current.includes(id)
-        ? current.filter((savedId) => savedId !== id)
-        : [...current, id]
-    );
-  }
-
-  const visiblePosts = posts.filter((post) => {
-    const matchesSection =
-      screen !== "section" ||
-      !activeSection ||
-      normalizeCategory(post.category) === activeSection;
-
-    const matchesSearch =
-      !search.trim() ||
-      `${post.title} ${post.content ?? ""} ${post.location ?? ""} ${post.category}`
-        .toLowerCase()
-        .includes(search.toLowerCase());
-
-    const matchesSaved =
-      screen !== "saved" || savedIds.includes(post.id);
-
-    return matchesSection && matchesSearch && matchesSaved;
-  });
-
-  // Authentication loading screen.
+  // Loading screen while the login session is checked.
   if (authLoading) {
     return (
       <main className="loading-screen">
@@ -391,135 +161,25 @@ export default function HomePage() {
     );
   }
 
-  // LOGIN AND SIGN-UP: one centred card, no left-side introduction.
-  if (!user) {
+  // Reset-password link: choose a new password first.
+  if (user && recovering) {
     return (
-      <main className="auth-page">
-        <div className="auth-glow auth-glow-one" />
-        <div className="auth-glow auth-glow-two" />
-
-        <section className="auth-layout">
-          <div className="auth-card">
-            <div className="mobile-brand">
-              <div className="brand-mark">F</div>
-              <span>
-                Futa<span className="brand-blue">Hub</span>
-              </span>
-            </div>
-
-            <div className="auth-card-heading">
-              <div className="auth-mini-icon">
-                {authMode === "login" ? "↗" : "+"}
-              </div>
-
-              <h2>
-                {authMode === "login"
-                  ? "Welcome back"
-                  : "Join the community"}
-              </h2>
-
-              <p>
-                {authMode === "login"
-                  ? "Sign in to continue to your campus."
-                  : "Create an account to get started."}
-              </p>
-            </div>
-
-            <form onSubmit={handleAuth} className="auth-form">
-              {authMode === "signup" && (
-                <label>
-                  Full name
-                  <input
-                    type="text"
-                    placeholder="Enter your full name"
-                    value={fullName}
-                    onChange={(event) => setFullName(event.target.value)}
-                    required
-                    autoComplete="name"
-                  />
-                </label>
-              )}
-
-              <label>
-                Email address
-                <input
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  required
-                  autoComplete="email"
-                />
-              </label>
-
-              <label>
-                Password
-                <input
-                  type="password"
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  required
-                  minLength={6}
-                  autoComplete={
-                    authMode === "login"
-                      ? "current-password"
-                      : "new-password"
-                  }
-                />
-              </label>
-
-              {authMessage && (
-                <div className="message-box" role="status">
-                  {authMessage}
-                </div>
-              )}
-
-              <button
-                className="primary-button auth-submit"
-                disabled={authBusy}
-              >
-                {authBusy
-                  ? "Please wait..."
-                  : authMode === "login"
-                    ? "Sign in to FutaHub"
-                    : "Create my account"}
-                {!authBusy && <span>→</span>}
-              </button>
-            </form>
-
-            <div className="auth-switch">
-              {authMode === "login"
-                ? "New to FutaHub?"
-                : "Already have an account?"}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setAuthMode(
-                    authMode === "login" ? "signup" : "login"
-                  );
-                  setAuthMessage("");
-                }}
-              >
-                {authMode === "login" ? "Create account" : "Sign in"}
-              </button>
-            </div>
-
-            <p className="auth-security">
-              <span>●</span> A community space for FUTA students
-            </p>
-          </div>
-        </section>
-
+      <>
+        <AuthScreen mode="recovery" onRecovered={() => setRecovering(false)} />
         <style jsx global>{styles}</style>
-      </main>
+      </>
     );
   }
 
-  const sectionInfo = activeSection
-    ? SECTIONS.find((section) => section.name === activeSection)
-    : null;
+  // Not logged in: log in, create account, forgot password.
+  if (!user) {
+    return (
+      <>
+        <AuthScreen mode="main" />
+        <style jsx global>{styles}</style>
+      </>
+    );
+  }
 
   return (
     <main className="app-shell">
@@ -614,12 +274,7 @@ export default function HomePage() {
                   onClick={() => openSection(section.name)}
                 >
                   <div className="category-card-top">
-                    <span
-                      className="category-icon"
-                      style={{
-                        color: CATEGORY_COLORS[section.name],
-                      }}
-                    >
+                    <span className="category-icon" style={{ color: ACCENT }}>
                       {section.icon}
                     </span>
 
@@ -638,185 +293,57 @@ export default function HomePage() {
                 </button>
               ))}
             </section>
-
-            <section className="recent-heading">
-              <div>
-                <span className="section-kicker">WHAT&apos;S HAPPENING</span>
-                <h2>Latest from campus</h2>
-              </div>
-
-              <button
-                className="text-button"
-                onClick={() => openSection("Announcements")}
-              >
-                View announcements <span>→</span>
-              </button>
-            </section>
-
-            {postsLoading ? (
-              <div className="empty-panel">
-                <div className="spinner" />
-                <p>Loading campus posts...</p>
-              </div>
-            ) : postsError ? (
-              <div className="notice-panel">{postsError}</div>
-            ) : posts.length === 0 ? (
-              <div className="empty-panel">
-                <div className="empty-icon">✦</div>
-                <h3>Your campus feed starts here</h3>
-                <p>
-                  There are no posts yet. Be among the first students to
-                  share something useful.
-                </p>
-                <button
-                  className="primary-button"
-                  onClick={() => openPostForm()}
-                >
-                  Create a post <span>→</span>
-                </button>
-              </div>
-            ) : (
-              <PostList
-                posts={posts.slice(0, 4)}
-                savedIds={savedIds}
-                onSave={toggleSaved}
-              />
-            )}
           </>
         )}
 
-        {screen === "section" && activeSection && (
-          <section className="section-page">
-            <button className="back-button" onClick={goHome}>
-              <span>←</span> Back to home
-            </button>
+        {screen === "section" && activeSection === "Announcements" && (
+          <AnnouncementsFeed onBack={goHome} />
+        )}
 
-            <div
-              className="section-hero"
-              style={{
-                borderTopColor: CATEGORY_COLORS[activeSection],
-              }}
-            >
-              <div
-                className="section-hero-icon"
-                style={{
-                  color: CATEGORY_COLORS[activeSection],
-                }}
-              >
-                {sectionInfo?.icon}
-              </div>
+        {screen === "section" && activeSection === "Student Marketplace" && (
+          <MarketplaceFeed
+            key={postRequestId}
+            onBack={goHome}
+            startOnForm={startWithForm}
+          />
+        )}
 
-              <div className="section-hero-copy">
-                <span className="section-kicker">FUTAHUB / CAMPUS SPACE</span>
-                <h1>{activeSection}</h1>
-                <p>{sectionInfo?.description}</p>
-              </div>
+        {screen === "section" && activeSection === "Food & Snacks" && (
+          <FoodFeed
+            key={postRequestId}
+            onBack={goHome}
+            startOnForm={startWithForm}
+          />
+        )}
 
-              <button
-                className="primary-button section-post-button"
-                onClick={() => openPostForm(activeSection)}
-              >
-                + Create post
-              </button>
-            </div>
+        {screen === "section" && activeSection === "Tutorials Available" && (
+          <TutorialsFeed
+            key={postRequestId}
+            onBack={goHome}
+            startOnForm={startWithForm}
+          />
+        )}
 
-            <div className="feed-toolbar">
-              <div>
-                <h2>Community feed</h2>
-                <p>Explore posts shared by fellow students.</p>
-              </div>
-
-              <span className="feed-count">
-                {visiblePosts.length}{" "}
-                {visiblePosts.length === 1 ? "POST" : "POSTS"}
-              </span>
-            </div>
-
-            <div className="search-box">
-              <span>⌕</span>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder={`Search ${activeSection.toLowerCase()}...`}
-              />
-
-              {search && (
-                <button
-                  onClick={() => setSearch("")}
-                  aria-label="Clear search"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-
-            {postsLoading ? (
-              <div className="empty-panel">
-                <div className="spinner" />
-                <p>Loading posts...</p>
-              </div>
-            ) : postsError ? (
-              <div className="notice-panel">{postsError}</div>
-            ) : visiblePosts.length === 0 ? (
-              <div className="empty-panel section-empty">
-                <div className="empty-icon">
-                  {sectionInfo?.icon ?? "✦"}
-                </div>
-                <h3>
-                  {search
-                    ? "No matching posts found"
-                    : `No posts in ${activeSection} yet`}
-                </h3>
-                <p>
-                  {search
-                    ? "Try another search term."
-                    : "Start the conversation by sharing the first post in this space."}
-                </p>
-                {!search && (
-                  <button
-                    className="primary-button"
-                    onClick={() => openPostForm(activeSection)}
-                  >
-                    Create the first post <span>→</span>
-                  </button>
-                )}
-              </div>
-            ) : (
-              <PostList
-                posts={visiblePosts}
-                savedIds={savedIds}
-                onSave={toggleSaved}
-              />
-            )}
-          </section>
+        {screen === "section" && activeSection === "Lost & Found" && (
+          <LostFoundFeed onBack={goHome} />
         )}
 
         {screen === "saved" && (
           <section className="section-page">
             <div className="simple-page-heading">
               <span className="section-kicker">YOUR COLLECTION</span>
-              <h1>Saved posts</h1>
-              <p>Posts you&apos;ve bookmarked for later.</p>
+              <h1>Saved</h1>
+              <p>Your bookmarked posts in one place.</p>
             </div>
 
-            {visiblePosts.length === 0 ? (
-              <div className="empty-panel">
-                <div className="empty-icon">♡</div>
-                <h3>No saved posts yet</h3>
-                <p>
-                  Tap the bookmark on any post to keep it here.
-                </p>
-                <button className="primary-button" onClick={goHome}>
-                  Explore FutaHub <span>→</span>
-                </button>
-              </div>
-            ) : (
-              <PostList
-                posts={visiblePosts}
-                savedIds={savedIds}
-                onSave={toggleSaved}
-              />
-            )}
+            <div className="empty-panel">
+              <div className="empty-icon">♡</div>
+              <h3>No saved posts yet</h3>
+              <p>Saving posts will be available soon.</p>
+              <button className="primary-button" onClick={goHome}>
+                Explore FutaHub <span>→</span>
+              </button>
+            </div>
           </section>
         )}
 
@@ -836,9 +363,7 @@ export default function HomePage() {
               </div>
 
               <div className="profile-details">
-                <h2>
-                  {user.user_metadata?.full_name || "FUTA Student"}
-                </h2>
+                <h2>{user.user_metadata?.full_name || "FUTA Student"}</h2>
                 <p>{user.email}</p>
                 <span className="profile-badge">
                   <span className="live-dot" />
@@ -851,7 +376,7 @@ export default function HomePage() {
               <button onClick={() => setScreen("saved")}>
                 <span className="profile-menu-icon">♡</span>
                 <span>
-                  <strong>Saved posts</strong>
+                  <strong>Saved</strong>
                   <small>View your bookmarked posts</small>
                 </span>
                 <span className="profile-menu-arrow">→</span>
@@ -866,6 +391,12 @@ export default function HomePage() {
                 <span className="profile-menu-arrow">→</span>
               </button>
             </div>
+
+            {accountMessage && (
+              <div className="message-box" role="status" style={{ marginTop: 18 }}>
+                {accountMessage}
+              </div>
+            )}
 
             <button className="logout-button" onClick={handleLogout}>
               ↗ Sign out of FutaHub
@@ -891,10 +422,7 @@ export default function HomePage() {
           <span>Explore</span>
         </button>
 
-        <button
-          className="nav-item nav-post"
-          onClick={() => openPostForm()}
-        >
+        <button className="nav-item nav-post" onClick={() => setShowPostMenu(true)}>
           <span className="nav-post-icon">+</span>
           <span>Post</span>
         </button>
@@ -916,251 +444,14 @@ export default function HomePage() {
         </button>
       </nav>
 
-      {showPostForm && (
-        <div
-          className="modal-backdrop"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setShowPostForm(false);
-              setPostMessage("");
-            }
-          }}
-        >
-          <section
-            className="post-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="post-modal-title"
-          >
-            <div className="modal-heading">
-              <div>
-                <span className="section-kicker">SHARE WITH YOUR CAMPUS</span>
-                <h2 id="post-modal-title">Create a post</h2>
-                <p>Share something useful with fellow FUTA students.</p>
-              </div>
-
-              <button
-                className="modal-close"
-                onClick={() => {
-                  setShowPostForm(false);
-                  setPostMessage("");
-                }}
-                aria-label="Close form"
-              >
-                ×
-              </button>
-            </div>
-
-            <form className="post-form" onSubmit={publishPost}>
-              <label>
-                Category <span className="required">*</span>
-                <select
-                  value={postCategory}
-                  onChange={(event) =>
-                    setPostCategory(event.target.value as Section)
-                  }
-                >
-                  {SECTIONS.map((section) => (
-                    <option key={section.name} value={section.name}>
-                      {section.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                Post title <span className="required">*</span>
-                <input
-                  value={postTitle}
-                  onChange={(event) => setPostTitle(event.target.value)}
-                  placeholder={
-                    postCategory === "Student Marketplace"
-                      ? "e.g. Textbook for sale"
-                      : postCategory === "Food & Snacks"
-                        ? "e.g. Freshly made snacks available"
-                        : postCategory === "Tutorials Available"
-                          ? "e.g. CSC 201 tutorial"
-                          : postCategory === "Lost & Found"
-                            ? "e.g. Lost student ID card"
-                            : "Give your post a clear title"
-                  }
-                  required
-                  maxLength={150}
-                />
-              </label>
-
-              <label>
-                Description
-                <textarea
-                  value={postContent}
-                  onChange={(event) => setPostContent(event.target.value)}
-                  placeholder="Add the important details..."
-                  rows={5}
-                />
-              </label>
-
-              {(postCategory === "Student Marketplace" ||
-                postCategory === "Food & Snacks" ||
-                postCategory === "Lost & Found" ||
-                postCategory === "Tutorials Available") && (
-                <label>
-                  Location
-                  <input
-                    value={postLocation}
-                    onChange={(event) => setPostLocation(event.target.value)}
-                    placeholder="e.g. North Gate, FUTA"
-                  />
-                </label>
-              )}
-
-              {(postCategory === "Student Marketplace" ||
-                postCategory === "Food & Snacks") && (
-                <label>
-                  Price (₦)
-                  <input
-                    value={postPrice}
-                    onChange={(event) => setPostPrice(event.target.value)}
-                    placeholder="e.g. 5000"
-                    inputMode="decimal"
-                  />
-                </label>
-              )}
-
-              {(postCategory === "Student Marketplace" ||
-                postCategory === "Lost & Found") && (
-                <label>
-                  WhatsApp number
-                  <input
-                    value={postWhatsapp}
-                    onChange={(event) => setPostWhatsapp(event.target.value)}
-                    placeholder="e.g. 08012345678"
-                    inputMode="tel"
-                  />
-                </label>
-              )}
-
-              {postCategory === "Tutorials Available" && (
-                <div className="form-note">
-                  You can include the course code, level, tutor, date and
-                  time in your description.
-                </div>
-              )}
-
-              {postMessage && (
-                <div className="message-box" role="status">
-                  {postMessage}
-                </div>
-              )}
-
-              <div className="form-actions">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    setShowPostForm(false);
-                    setPostMessage("");
-                  }}
-                  disabled={posting}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  className="primary-button"
-                  type="submit"
-                  disabled={posting}
-                >
-                  {posting ? "Publishing..." : "Publish post"}
-                  {!posting && <span>→</span>}
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
+      {showPostMenu && (
+        <PostMenu onPick={startPost} onClose={() => setShowPostMenu(false)} />
       )}
 
       <style jsx global>{styles}</style>
     </main>
   );
 }
-
-function PostList({
-  posts,
-  savedIds,
-  onSave,
-}: {
-  posts: Post[];
-  savedIds: (number | string)[];
-  onSave: (id: number | string) => void;
-}) {
-  return (
-    <div className="post-list">
-      {posts.map((post) => {
-        const section = normalizeCategory(post.category);
-        const isSaved = savedIds.includes(post.id);
-
-        return (
-          <article className="post-card" key={post.id}>
-            <div className="post-card-top">
-              <span
-                className="post-category"
-                style={{
-                  color: section ? CATEGORY_COLORS[section] : "#77aaff",
-                }}
-              >
-                {section ?? post.category}
-              </span>
-
-              <button
-                className={`save-button ${isSaved ? "saved" : ""}`}
-                onClick={() => onSave(post.id)}
-                aria-label={isSaved ? "Remove saved post" : "Save post"}
-                title={isSaved ? "Remove saved post" : "Save post"}
-              >
-                {isSaved ? "♥" : "♡"}
-              </button>
-            </div>
-
-            <h3>{post.title}</h3>
-
-            {post.content && <p className="post-content">{post.content}</p>}
-
-            <div className="post-meta">
-              {post.location && (
-                <span>
-                  <span className="meta-icon">⌖</span>
-                  {post.location}
-                </span>
-              )}
-
-              {post.price !== null &&
-                post.price !== undefined &&
-                String(post.price).trim() !== "" && (
-                  <span className="post-price">₦{String(post.price)}</span>
-                )}
-            </div>
-
-            <div className="post-card-footer">
-              <span>{formatDate(post.created_at)}</span>
-
-              {post.whatsapp && (
-                <a
-                  className="contact-button"
-                  href={`https://wa.me/${post.whatsapp.replace(/\D/g, "")}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  Contact on WhatsApp ↗
-                </a>
-              )}
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
 const styles = `
 :root {
   --bg: #070b14;
