@@ -224,7 +224,7 @@ export default function LostFoundFeed({ onBack }: { onBack: () => void }) {
             const isLost = item.lost_found_type === "lost";
             const isOwner = item.user_id === userId;
             return (
-              <article className="lf-card" key={item.id}>
+               <article className="lf-card" key={item.id} data-listing-id={item.id}>
                 <div className="lf-tags">
                   <span className={isLost ? "lf-tag lf-tag-lost" : "lf-tag lf-tag-found"}>
                     {isLost ? "LOST" : "FOUND"}

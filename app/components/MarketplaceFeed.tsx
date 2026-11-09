@@ -168,7 +168,7 @@ export default function MarketplaceFeed({
       ) : (
         <div className="mk-list">
           {items.map((item) => (
-            <article className="mk-card" key={item.id}>
+       <article className="mk-card" key={item.id} data-listing-id={item.id}>
               {item.image_urls.length > 0 && (
                 <div className="mk-photo">
                   {/* eslint-disable-next-line @next/next/no-img-element */}

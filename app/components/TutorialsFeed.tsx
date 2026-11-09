@@ -9,6 +9,7 @@ import {
   type Listing,
 } from "@/lib/listings";
 import { removeMediaByUrl } from "@/lib/uploads";
+import EditPostForm from "./EditPostForm";
 import TutorialsPostForm, { formatTime } from "./TutorialsPostForm";
 import { formatDate } from "./LostFoundPostForm";
 
@@ -36,6 +37,7 @@ export default function TutorialsFeed({
   const [filter, setFilter] = useState<Filter>("all");
   const [confirmId, setConfirmId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [editing, setEditing] = useState<Listing | null>(null);
 
   useEffect(() => {
     void supabase.auth.getUser().then(({ data }) => {
@@ -81,6 +83,22 @@ export default function TutorialsFeed({
     }
     setBusyId(null);
     setConfirmId(null);
+  }
+
+  if (editing) {
+    return (
+      <EditPostForm
+        item={editing}
+        onCancel={() => setEditing(null)}
+        onSaved={(updated) => {
+          setItems((current) =>
+            current.map((entry) => (entry.id === updated.id ? updated : entry))
+          );
+          setEditing(null);
+          setBanner("Your post has been updated.");
+        }}
+      />
+    );
   }
 
   if (view === "form") {
@@ -173,7 +191,7 @@ export default function TutorialsFeed({
       ) : (
         <div className="tt-list">
           {visible.map((item) => (
-            <article className="tt-card" key={item.id}>
+            <article className="tt-card" key={item.id} data-listing-id={item.id}>
               <div className="tt-tags">
                 <span className="tt-free">FREE</span>
                 {item.level && <span className="tt-level">{item.level}</span>}
@@ -253,12 +271,20 @@ export default function TutorialsFeed({
                       </button>
                     </>
                   ) : (
-                    <button
-                      className="tt-ghost"
-                      onClick={() => setConfirmId(item.id)}
-                    >
-                      Delete post
-                    </button>
+                    <>
+                      <button
+                        className="tt-ghost"
+                        onClick={() => setEditing(item)}
+                      >
+                        Edit post
+                      </button>
+                      <button
+                        className="tt-ghost"
+                        onClick={() => setConfirmId(item.id)}
+                      >
+                        Delete post
+                      </button>
+                    </>
                   )}
                 </div>
               )}

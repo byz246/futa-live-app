@@ -10,6 +10,8 @@ import FoodFeed from "./components/FoodFeed";
 import TutorialsFeed from "./components/TutorialsFeed";
 import LostFoundFeed from "./components/LostFoundFeed";
 import AnnouncementsFeed from "./components/AnnouncementsFeed";
+import PostDetails from "./components/PostDetails";
+import SavedPosts from "./components/SavedPosts";
 
 type Section =
   | "Announcements"
@@ -72,6 +74,7 @@ export default function HomePage() {
   const [showPostMenu, setShowPostMenu] = useState(false);
   const [startWithForm, setStartWithForm] = useState(false);
   const [postRequestId, setPostRequestId] = useState(0);
+  const [openPostId, setOpenPostId] = useState<number | null>(null);
   const [accountMessage, setAccountMessage] = useState("");
 
   // Restore the Supabase login session and detect a password-reset link.
@@ -105,6 +108,15 @@ export default function HomePage() {
     };
   }, []);
 
+    // Tapping a post card opens its full details.
+  function handleContentClick(event: React.MouseEvent<HTMLDivElement>) {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, a, input, select, textarea, label, video")) return;
+    const card = target.closest("[data-listing-id]");
+    if (!card) return;
+    const id = Number(card.getAttribute("data-listing-id"));
+    if (Number.isFinite(id)) setOpenPostId(id);
+  }
   // Open a category immediately.
   function openSection(section: Section) {
     setStartWithForm(false);
@@ -210,7 +222,7 @@ export default function HomePage() {
         </button>
       </header>
 
-      <div className="app-content">
+            <div className="app-content" onClick={handleContentClick}>
         {screen === "home" && (
           <>
             <section className="hero-panel">

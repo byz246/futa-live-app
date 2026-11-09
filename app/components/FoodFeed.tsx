@@ -181,7 +181,7 @@ export default function FoodFeed({
       ) : (
         <div className="fd-list">
           {items.map((item) => (
-            <article className="fd-card" key={item.id}>
+                       <article className="fd-card" key={item.id} data-listing-id={item.id}>
               {item.image_urls.length > 0 && (
                 <div className="fd-photo">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
