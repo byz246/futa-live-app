@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import AuthScreen from "./components/AuthScreen";
@@ -108,8 +108,8 @@ export default function HomePage() {
     };
   }, []);
 
-    // Tapping a post card opens its full details.
-  function handleContentClick(event: React.MouseEvent<HTMLDivElement>) {
+  // Tapping a post card opens its full details.
+  function handleContentClick(event: ReactMouseEvent<HTMLDivElement>) {
     const target = event.target as HTMLElement;
     if (target.closest("button, a, input, select, textarea, label, video")) return;
     const card = target.closest("[data-listing-id]");
@@ -117,6 +117,7 @@ export default function HomePage() {
     const id = Number(card.getAttribute("data-listing-id"));
     if (Number.isFinite(id)) setOpenPostId(id);
   }
+
   // Open a category immediately.
   function openSection(section: Section) {
     setStartWithForm(false);
@@ -155,6 +156,7 @@ export default function HomePage() {
     setScreen("home");
     setActiveSection(null);
     setShowPostMenu(false);
+    setOpenPostId(null);
     setAccountMessage("");
   }
 
@@ -222,7 +224,7 @@ export default function HomePage() {
         </button>
       </header>
 
-            <div className="app-content" onClick={handleContentClick}>
+      <div className="app-content" onClick={handleContentClick}>
         {screen === "home" && (
           <>
             <section className="hero-panel">
@@ -337,26 +339,11 @@ export default function HomePage() {
         )}
 
         {screen === "section" && activeSection === "Lost & Found" && (
-          <LostFoundFeed onBack={goHome} />
+          <LostFoundFeed key={postRequestId} onBack={goHome} />
         )}
 
         {screen === "saved" && (
-          <section className="section-page">
-            <div className="simple-page-heading">
-              <span className="section-kicker">YOUR COLLECTION</span>
-              <h1>Saved</h1>
-              <p>Your bookmarked posts in one place.</p>
-            </div>
-
-            <div className="empty-panel">
-              <div className="empty-icon">♡</div>
-              <h3>No saved posts yet</h3>
-              <p>Saving posts will be available soon.</p>
-              <button className="primary-button" onClick={goHome}>
-                Explore FutaHub <span>→</span>
-              </button>
-            </div>
-          </section>
+          <SavedPosts key={postRequestId} onExplore={goHome} />
         )}
 
         {screen === "profile" && (
@@ -456,6 +443,19 @@ export default function HomePage() {
         </button>
       </nav>
 
+      {openPostId !== null && (
+        <PostDetails
+          id={openPostId}
+          onClose={(changed) => {
+            setOpenPostId(null);
+            if (changed) {
+              setStartWithForm(false);
+              setPostRequestId((id) => id + 1);
+            }
+          }}
+        />
+      )}
+
       {showPostMenu && (
         <PostMenu onPick={startPost} onClose={() => setShowPostMenu(false)} />
       )}
@@ -464,6 +464,7 @@ export default function HomePage() {
     </main>
   );
 }
+
 const styles = `
 :root {
   --bg: #070b14;
